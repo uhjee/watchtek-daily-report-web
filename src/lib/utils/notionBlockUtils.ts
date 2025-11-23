@@ -177,6 +177,18 @@ export function createBulletedListItemBlock(text: string): BlockObjectRequest {
 }
 
 /**
+ * divider 블록을 생성한다
+ * @returns divider 블록
+ */
+export function createDividerBlock(): BlockObjectRequest {
+  return {
+    object: 'block' as const,
+    type: 'divider' as const,
+    divider: {},
+  }
+}
+
+/**
  * 테이블 셀 데이터 타입 (텍스트 또는 하이퍼링크 포함)
  */
 export type TableCellData = string | { text: string; link?: string }

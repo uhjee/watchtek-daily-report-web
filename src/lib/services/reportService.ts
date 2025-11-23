@@ -22,6 +22,7 @@ import {
   createParagraphBlock,
   createBulletedListItemBlock,
   createCodeBlocks,
+  createDividerBlock,
   createTableWithLinksAndRows,
   TableCellData,
 } from '../utils/notionBlockUtils'
@@ -159,13 +160,17 @@ export class ReportService {
     // 7. 인원별 공수 요약 (연차/반차 정보 포함)
     const manHourSummary = this.formatManHourSummaryWithLeave(manHourByPerson)
 
-    // 8. 결과 반환
+    // 8. 그룹별 공수 계산
+    const manHourByGroup = this.getManHourByGroup(distinctReports)
+
+    // 9. 결과 반환
     const weekOfMonth = getWeekOfMonth(targetDate)
 
     return {
       date: targetDate,
       title: `큐브 파트 주간업무 보고 (${weekOfMonth})`,
       manHourSummary,
+      manHourByGroup,
       manHourByPerson,
       tasks: {
         inProgress: inProgressTasks,
@@ -281,7 +286,7 @@ export class ReportService {
    */
   async createNotionMonthlyPage(
     date: string,
-    manHourSummary: Array<{
+    _manHourSummary: Array<{
       name: string
       hours: number
       leaveInfo?: string
@@ -308,11 +313,12 @@ export class ReportService {
     }>,
     manHourByPerson?: ManHourByPersonWithReports[]
   ) {
-    // 1. 페이지 속성 생성
-    const { firstDay } = getCurrentMonthRangeByWednesday(date)
-    const monthDate = new Date(firstDay)
-    const month = monthDate.getMonth() + 1
-    const title = `큐브 파트 월간업무 보고 (${month}월)`
+    // 1. 페이지 속성 생성 (원본과 동일한 형식)
+    const monthYear = new Date(date).toLocaleDateString('ko-KR', {
+      year: 'numeric',
+      month: 'long',
+    })
+    const title = `${monthYear} 큐브 파트 월간업무 보고`
 
     const properties = {
       title: {
@@ -338,26 +344,62 @@ export class ReportService {
 
     const icon = {
       type: 'emoji' as const,
-      emoji: '📅',
+      emoji: '📊',
     }
 
-    // 2. 블록 생성
-    const manHourText = this.textFormatter.stringifyWeeklyManHourSummary(manHourSummary)
-    const reportText = this.textFormatter.stringifyMonthlyReport(
-      date,
-      inProgressTasks,
-      completedTasks
-    )
+    // 2. 블록 생성 (원본 프로젝트와 동일한 구조)
+    const blocks: BlockObjectRequest[] = []
 
-    const blocks = [
-      createHeading2Block('월간 공수 현황'),
-      createParagraphBlock(manHourText),
-    ]
+    // 2-1. 페이지 제목 (Heading 1)
+    blocks.push(createHeading1Block(title))
 
-    // 텍스트를 청크로 분할하여 코드 블록 생성
-    const textChunks = splitTextIntoChunks(reportText, 2000)
-    textChunks.forEach((chunk) => {
-      blocks.push(...createCodeBlocks(chunk))
+    // 2-2. 진행 중인 업무 섹션
+    blocks.push(createHeading2Block('진행 중인 업무', 'yellow_background'))
+
+    // 진행업무 그룹 처리
+    const inProgressGrouped = this.groupTasksByGroup(inProgressTasks)
+    inProgressGrouped.forEach((groupData, groupIndex) => {
+      // Heading 3: 그룹명
+      blocks.push(createHeading3Block(`${groupIndex + 1}. ${groupData.group}`))
+
+      // 각 SubGroup별 작업 목록
+      groupData.subGroups.forEach((subGroupData) => {
+        // Paragraph: [서브그룹명]
+        blocks.push(createParagraphBlock(`[${subGroupData.subGroup}]`))
+
+        // BulletedListItem: 각 작업 아이템 (진행률 포함)
+        subGroupData.items.forEach((item) => {
+          const progressText = item.progress !== undefined ? `, ${item.progress}%` : ''
+          const itemText = `${item.title}(${item.person}${progressText})`
+          blocks.push(createBulletedListItemBlock(itemText))
+        })
+      })
+    })
+
+    // 2-3. 완료된 업무 섹션 전에 Divider 추가
+    blocks.push(createDividerBlock())
+
+    // 2-4. 완료된 업무 섹션
+    blocks.push(createHeading2Block('완료된 업무', 'yellow_background'))
+
+    // 완료업무 그룹 처리
+    const completedGrouped = this.groupTasksByGroup(completedTasks)
+    completedGrouped.forEach((groupData, groupIndex) => {
+      // Heading 3: 그룹명
+      blocks.push(createHeading3Block(`${groupIndex + 1}. ${groupData.group}`))
+
+      // 각 SubGroup별 작업 목록
+      groupData.subGroups.forEach((subGroupData) => {
+        // Paragraph: [서브그룹명]
+        blocks.push(createParagraphBlock(`[${subGroupData.subGroup}]`))
+
+        // BulletedListItem: 각 작업 아이템 (진행률 포함)
+        subGroupData.items.forEach((item) => {
+          const progressText = item.progress !== undefined ? `, ${item.progress}%` : ''
+          const itemText = `${item.title}(${item.person}${progressText})`
+          blocks.push(createBulletedListItemBlock(itemText))
+        })
+      })
     })
 
     // 3. 100개 블록 제한을 고려하여 첫 번째 청크로만 페이지 생성
@@ -509,6 +551,7 @@ export class ReportService {
    * Notion 주간 보고서 페이지를 생성한다
    * @param date - 보고서 날짜 (YYYY-MM-DD 형식)
    * @param manHourSummary - 인원별 공수 요약 (연차/반차 정보 포함)
+   * @param manHourByGroup - 그룹별 공수
    * @param inProgressTasks - 진행업무
    * @param manHourByPerson - 개인별 공수 및 진행 상황
    * @returns 생성된 페이지 정보
@@ -519,6 +562,10 @@ export class ReportService {
       name: string
       hours: number
       leaveInfo?: string
+    }>,
+    manHourByGroup: Array<{
+      group: string
+      hours: number
     }>,
     inProgressTasks: Array<{
       group: string
@@ -560,7 +607,7 @@ export class ReportService {
 
     const icon = {
       type: 'emoji' as const,
-      emoji: '📊',
+      emoji: '🔶',
     }
 
     // 2. 블록 생성 (원본 프로젝트와 동일한 형식)
@@ -574,7 +621,11 @@ export class ReportService {
     const manHourText = this.textFormatter.stringifyWeeklyManHourSummary(manHourSummary)
     blocks.push(createParagraphBlock(manHourText))
 
-    // 2-3. 금주 진행 사항 (Heading 2 with yellow_background)
+    // 2-3. 그룹별 공수 (인원별 공수 바로 다음)
+    const manHourByGroupText = this.textFormatter.stringifyManHourByGroup(manHourByGroup)
+    blocks.push(createParagraphBlock(manHourByGroupText))
+
+    // 2-4. 금주 진행 사항 (Heading 2 with yellow_background)
     const inProgressTitle = formatReportGroupTitle('진행업무', true) // '금주 진행 사항'
     blocks.push(createHeading2Block(inProgressTitle, 'yellow_background'))
 
@@ -1101,8 +1152,27 @@ export class ReportService {
   }
 
   /**
-   * 인원별 공수를 집계한다
+   * 그룹별 공수를 계산한다
+   * @param reports - 일일 보고서 데이터 배열
+   * @returns 그룹별 공수 합계 (공수 내림차순 정렬)
    */
+  private getManHourByGroup(reports: DailyReport[]): Array<{ group: string; hours: number }> {
+    const groupMap = reports.reduce((acc, report) => {
+      acc[report.group] = (acc[report.group] ?? 0) + report.manHour
+      return acc
+    }, {} as Record<string, number>)
+
+    // 공수 내림차순 정렬
+    return Object.entries(groupMap)
+      .map(([group, hours]) => ({ group, hours }))
+      .sort((a, b) => b.hours - a.hours)
+  }
+
+  /**
+   * 인원별 공수를 집계한다
+   * @deprecated 현재 사용되지 않음. calculateWeeklyManHourSummary 사용
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private calculateManHourSummary(reports: DailyReport[]) {
     const manHourMap = new Map<string, { hours: number; isCompleted: boolean }>()
 

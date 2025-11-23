@@ -134,6 +134,28 @@ export class ReportTextFormatterService {
   }
 
   /**
+   * 그룹별 공수를 텍스트로 변환
+   * @param manHourByGroup - 그룹별 공수 데이터 (공수 내림차순 정렬됨)
+   * @returns 포맷된 그룹별 공수 문자열
+   */
+  stringifyManHourByGroup(
+    manHourByGroup: Array<{
+      group: string
+      hours: number
+    }>
+  ): string {
+    let result = '[그룹별 공수]\n'
+
+    manHourByGroup.forEach((groupData) => {
+      // m/d = m/h / 8 (소수점 1자리까지)
+      const manDay = Math.round((groupData.hours / 8) * 10) / 10
+      result += `- ${groupData.group}: ${groupData.hours} m/h, ${manDay} m/d\n`
+    })
+
+    return result
+  }
+
+  /**
    * 주간 보고서를 전체 텍스트로 변환 (진행업무만)
    * @param date - 보고서 날짜
    * @param inProgressTasks - 진행업무
