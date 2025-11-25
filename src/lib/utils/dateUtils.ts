@@ -31,9 +31,9 @@ export function formatDateToYYYYMMDD(date: Date): string {
  */
 export function getToday(): string {
   const now = new Date();
-  // return formatDateToYYYYMMDD(now);
+  return formatDateToYYYYMMDD(now);
   // 테스트용 고정 날짜는 주석 처리
-  return '2025-11-21';
+  // return '2025-11-21';
 }
 
 /**
@@ -66,7 +66,10 @@ export function getWeekOfMonth(dateString: string): string {
  * @param startDate - YYYY-MM-DD 형식의 기준 날짜
  * @returns 해당 달의 첫날과 마지막 날
  */
-export function getCurrentMonthRange(startDate: string): { firstDay: string; lastDay: string } {
+export function getCurrentMonthRange(startDate: string): {
+  firstDay: string;
+  lastDay: string;
+} {
   const date = new Date(startDate);
   return getMonthRange(date);
 }
@@ -76,7 +79,10 @@ export function getCurrentMonthRange(startDate: string): { firstDay: string; las
  * 월~화: 이전 주 수요일 기준, 수~일: 이번 주 수요일 기준으로 월 판단
  * @returns 수요일 기준 현재 달의 첫날과 마지막 날
  */
-export function getCurrentMonthRangeByWednesday(startDate: string): { firstDay: string; lastDay: string } {
+export function getCurrentMonthRangeByWednesday(startDate: string): {
+  firstDay: string;
+  lastDay: string;
+} {
   const now = new Date(startDate);
   const dayOfWeek = now.getDay(); // 0: 일요일, 1: 월요일, ..., 6: 토요일
 
@@ -163,10 +169,10 @@ export function formatDateToShortFormat(date: string): string {
  */
 export function isHoliday(dateString: string): boolean {
   const date = new Date(dateString);
-  
+
   // 주말 체크
   const isWeekend = isWeekendDay(date);
-  
+
   // 공휴일 체크 (양력 기준)
   const isPublicHoliday = holiday.isHoliday(
     date.getFullYear(),
@@ -175,7 +181,7 @@ export function isHoliday(dateString: string): boolean {
     false, // isLunar
     false, // isLeapMonth
   );
-  
+
   return isWeekend || isPublicHoliday;
 }
 
@@ -198,16 +204,17 @@ function isWeekendDay(date: Date): boolean {
 export function getLastWeekdayOfWeek(dateString: string): string {
   const date = new Date(dateString);
   const dayOfWeek = date.getDay(); // 0: 일, 1: 월, ..., 6: 토
-  
+
   // 해당 주의 금요일 계산
   const friday = new Date(date);
   const daysToFriday = 5 - dayOfWeek; // 금요일까지 남은 일수
   friday.setDate(date.getDate() + daysToFriday);
-  
+
   // 금요일부터 거슬러 올라가면서 첫 번째 평일(비휴일) 찾기
   const lastWeekday = new Date(friday);
-  
-  while (lastWeekday.getDay() >= 1 && lastWeekday.getDay() <= 5) { // 월~금 범위에서
+
+  while (lastWeekday.getDay() >= 1 && lastWeekday.getDay() <= 5) {
+    // 월~금 범위에서
     const dateStr = formatDateToYYYYMMDD(lastWeekday);
     if (!isHoliday(dateStr)) {
       return dateStr;
@@ -215,7 +222,7 @@ export function getLastWeekdayOfWeek(dateString: string): string {
     // 하루 전으로 이동
     lastWeekday.setDate(lastWeekday.getDate() - 1);
   }
-  
+
   // 만약 해당 주에 평일이 없다면 금요일 반환 (예외 상황)
   return formatDateToYYYYMMDD(friday);
 }
@@ -238,16 +245,16 @@ export function isLastWeekdayOfWeek(dateString: string): boolean {
 export function isLastWeekOfMonth(dateString: string): boolean {
   const date = new Date(dateString);
   const dayOfWeek = date.getDay();
-  
+
   // 해당 주의 수요일 계산
   const wednesday = new Date(date);
   const daysToWednesday = dayOfWeek >= 3 ? dayOfWeek - 3 : dayOfWeek + 4;
   wednesday.setDate(date.getDate() - daysToWednesday);
-  
+
   // 다음 주 수요일 계산
   const nextWednesday = new Date(wednesday);
   nextWednesday.setDate(wednesday.getDate() + 7);
-  
+
   // 이번 주 수요일과 다음 주 수요일의 월 비교
   return wednesday.getMonth() !== nextWednesday.getMonth();
 }
@@ -272,7 +279,10 @@ export function isLastWeekdayOfMonth(dateString: string): boolean {
  * @param today - YYYY-MM-DD 형식의 오늘 날짜
  * @returns 이번 주 월요일과 오늘 날짜
  */
-export function getThisWeekMondayToToday(today: string): { startDate: string; endDate: string } {
+export function getThisWeekMondayToToday(today: string): {
+  startDate: string;
+  endDate: string;
+} {
   const date = new Date(today);
   const dayOfWeek = date.getDay(); // 0: 일, 1: 월, ..., 6: 토
 
@@ -294,7 +304,10 @@ export function getThisWeekMondayToToday(today: string): { startDate: string; en
  * @param endDate - YYYY-MM-DD 형식의 종료 날짜
  * @returns 근무일수
  */
-export function getWorkingDaysCount(startDate: string, endDate: string): number {
+export function getWorkingDaysCount(
+  startDate: string,
+  endDate: string,
+): number {
   const start = new Date(startDate);
   const end = new Date(endDate);
 

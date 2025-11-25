@@ -367,10 +367,9 @@ export default function ReportsPage() {
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">보고서</h1>
-            <p className="text-muted-foreground mt-1">
-              {report ? `${report.date} 보고서` : 'Notion 데이터 기반 자동 보고서'}
-            </p>
+            <h1 className="text-2xl font-bold">
+              {report ? `${report.date} 업무 현황` : '업무 현황'}
+            </h1>
           </div>
           <div className="flex items-center gap-2">
             {/* 새로고침 버튼 */}

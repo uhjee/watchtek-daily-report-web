@@ -49,8 +49,8 @@ export function Header({ sidebarCollapsed = false }: HeaderProps) {
     <header
       className="sticky top-0 z-40 bg-card/80 backdrop-blur-md border-b border-border"
       style={{
-        marginLeft: sidebarCollapsed ? '72px' : '256px',
-        width: sidebarCollapsed ? 'calc(100% - 72px)' : 'calc(100% - 256px)',
+        marginLeft: sidebarCollapsed ? '64px' : '128px',
+        width: sidebarCollapsed ? 'calc(100% - 64px)' : 'calc(100% - 128px)',
         transition: 'margin-left 0.3s, width 0.3s',
       }}
     >
