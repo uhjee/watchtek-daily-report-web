@@ -83,7 +83,7 @@ export default function MonthlyTasksPage() {
   const filteredTasks = useMemo(() => {
     if (!data?.tasks) return []
 
-    return data.tasks.filter((task) => {
+    const filtered = data.tasks.filter((task) => {
       // 멤버 필터
       if (task.person !== selectedMember) return false
 
@@ -97,7 +97,32 @@ export default function MonthlyTasksPage() {
 
       return taskYear === selectedYear && taskMonth === selectedMonth
     })
+
+    // 정렬: 완료일 오름차순, 단 특정 Group은 우선순위 낮춤
+    const lowPriorityGroups = ['회의', '기타']
+
+    return filtered.sort((a, b) => {
+      const aIsLowPriority = lowPriorityGroups.includes(a.group)
+      const bIsLowPriority = lowPriorityGroups.includes(b.group)
+
+      // 우선순위가 다르면 우선순위로 정렬
+      if (aIsLowPriority !== bIsLowPriority) {
+        return aIsLowPriority ? 1 : -1
+      }
+
+      // 우선순위가 같으면 완료일로 정렬 (오름차순)
+      const aDate = a.date.end || a.date.start
+      const bDate = b.date.end || b.date.start
+
+      return new Date(aDate).getTime() - new Date(bDate).getTime()
+    })
   }, [data?.tasks, selectedMember, selectedYear, selectedMonth])
+
+  // 총 공수 계산 (m/d)
+  const totalManDays = useMemo(() => {
+    const totalManHours = filteredTasks.reduce((sum, task) => sum + task.manHour, 0)
+    return (totalManHours / 8).toFixed(1)
+  }, [filteredTasks])
 
   return (
     <DashboardLayout>
@@ -184,8 +209,11 @@ export default function MonthlyTasksPage() {
         {/* Table */}
         <Card className="shadow-soft">
           <CardHeader className="pt-4 pb-3 px-6">
-            <CardTitle className="text-base font-semibold">
-              [{selectedMember}] 업무 목록 총 {filteredTasks.length}건
+            <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <span>[{selectedMember}] 업무목록</span>
+              <span className="text-sm font-normal text-muted-foreground">
+                총{filteredTasks.length}건 / 총{totalManDays}m/d
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0 px-6 pb-4">
@@ -206,41 +234,52 @@ export default function MonthlyTasksPage() {
                       <TableHead>업무 내용</TableHead>
                       <TableHead className="w-28">계획 완료일</TableHead>
                       <TableHead className="w-28">완료일</TableHead>
+                      <TableHead className="w-20 text-right">M/H</TableHead>
+                      <TableHead className="w-20 text-right">M/D</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredTasks.map((task, index) => (
-                      <TableRow key={task.id}>
-                        <TableCell className="font-medium">{index + 1}</TableCell>
-                        <TableCell className="truncate max-w-[8rem]" title={task.group}>
-                          {task.group}
-                        </TableCell>
-                        <TableCell>
-                          {task.pmsNumber && task.pmsLink ? (
-                            <a
-                              href={task.pmsLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-primary hover:underline flex items-center gap-1 whitespace-nowrap"
-                            >
-                              #{task.pmsNumber}
-                              <ExternalLink className="w-3 h-3" />
-                            </a>
-                          ) : task.pmsNumber ? (
-                            `#${task.pmsNumber}`
-                          ) : (
-                            '-'
-                          )}
-                        </TableCell>
-                        <TableCell className="max-w-md" title={task.title}>
-                          {task.title}
-                        </TableCell>
-                        <TableCell>-</TableCell>
-                        <TableCell className="whitespace-nowrap">
-                          {task.date.end || task.date.start}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {filteredTasks.map((task, index) => {
+                      const manDays = (task.manHour / 8).toFixed(1)
+                      return (
+                        <TableRow key={task.id}>
+                          <TableCell className="font-medium">{index + 1}</TableCell>
+                          <TableCell className="truncate max-w-[8rem]" title={task.group}>
+                            {task.group}
+                          </TableCell>
+                          <TableCell>
+                            {task.pmsNumber && task.pmsLink ? (
+                              <a
+                                href={task.pmsLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-primary hover:underline flex items-center gap-1 whitespace-nowrap"
+                              >
+                                #{task.pmsNumber}
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            ) : task.pmsNumber ? (
+                              `#${task.pmsNumber}`
+                            ) : (
+                              '-'
+                            )}
+                          </TableCell>
+                          <TableCell className="max-w-md" title={task.title}>
+                            {task.title}
+                          </TableCell>
+                          <TableCell>-</TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {task.date.end || task.date.start}
+                          </TableCell>
+                          <TableCell className="text-right whitespace-nowrap">
+                            {task.manHour}
+                          </TableCell>
+                          <TableCell className="text-right whitespace-nowrap">
+                            {manDays}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
               </div>

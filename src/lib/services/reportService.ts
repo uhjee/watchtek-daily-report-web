@@ -1071,27 +1071,46 @@ export class ReportService {
       }>
     }> = []
 
-    // Group 정렬: DCIM프로젝트 > 일반 그룹 > 특수 그룹
+    // Group 정렬: 우선순위 기반 정렬
     const sortedGroups = Array.from(grouped.entries()).sort(([groupA], [groupB]) => {
-      // DCIM프로젝트 우선 처리
-      if (groupA === 'DCIM프로젝트' || groupA === 'DCIM 구현') return -1
-      if (groupB === 'DCIM프로젝트' || groupB === 'DCIM 구현') return 1
+      // 우선순위 정의
+      const highPriorityGroups = ['kt cloud', 'kt cloud - 상주']
+      const secondPriorityGroups = ['DCIM 구현', 'DCIM프로젝트']
+      const lowPriorityGroups = ['자체결함', '기술지원팀 요청']
+      const lowestPriorityGroups = ['회의', '기타']
 
-      const specialGroups = ['사이트 지원', '결함처리', 'OJT', '회의', '기타', '자체결함']
-      const isSpecialA = specialGroups.includes(groupA)
-      const isSpecialB = specialGroups.includes(groupB)
-
-      // 둘 다 특수 그룹이 아닌 경우: 일반 정렬
-      if (!isSpecialA && !isSpecialB) {
-        return groupA.localeCompare(groupB, 'ko')
+      const getPriority = (group: string): number => {
+        if (highPriorityGroups.includes(group)) return 1
+        if (secondPriorityGroups.includes(group)) return 2
+        if (lowPriorityGroups.includes(group)) return 4
+        if (lowestPriorityGroups.includes(group)) return 5
+        return 3 // 일반 그룹
       }
 
-      // 하나만 특수 그룹인 경우: 특수 그룹을 뒤로
-      if (isSpecialA && !isSpecialB) return 1
-      if (!isSpecialA && isSpecialB) return -1
+      const priorityA = getPriority(groupA)
+      const priorityB = getPriority(groupB)
 
-      // 둘 다 특수 그룹인 경우: 특수 그룹 내에서 순서대로
-      return specialGroups.indexOf(groupA) - specialGroups.indexOf(groupB)
+      // 우선순위가 다르면 우선순위로 정렬
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB
+      }
+
+      // 같은 우선순위 내에서는 정의된 순서대로
+      if (priorityA === 1) {
+        return highPriorityGroups.indexOf(groupA) - highPriorityGroups.indexOf(groupB)
+      }
+      if (priorityA === 2) {
+        return secondPriorityGroups.indexOf(groupA) - secondPriorityGroups.indexOf(groupB)
+      }
+      if (priorityA === 4) {
+        return lowPriorityGroups.indexOf(groupA) - lowPriorityGroups.indexOf(groupB)
+      }
+      if (priorityA === 5) {
+        return lowestPriorityGroups.indexOf(groupA) - lowestPriorityGroups.indexOf(groupB)
+      }
+
+      // 일반 그룹(우선순위 3)은 가나다순
+      return groupA.localeCompare(groupB, 'ko')
     })
 
     sortedGroups.forEach(([group, subGroupMap]) => {
@@ -1143,6 +1162,7 @@ export class ReportService {
             person: item.person,
             progress: item.progressRate > 0 ? Math.round(item.progressRate) : undefined,
             manHour: item.manHour,
+            pmsLink: item.pmsLink,
           })),
         })
       })
@@ -1450,20 +1470,23 @@ export class ReportService {
 
     // 2. 블록 생성
     const manHourText = this.textFormatter.stringifyManHourSummary(manHourSummary)
-    const reportText = this.textFormatter.stringifyDailyReport(
-      date,
-      inProgressTasks,
-      plannedTasks
-    )
+    const inProgressText = this.textFormatter.stringifyTasks(inProgressTasks, '진행업무')
+    const plannedText = this.textFormatter.stringifyTasks(plannedTasks, '예정업무')
 
     const blocks = [
       createHeading2Block('일일 공수 현황'),
       createParagraphBlock(manHourText),
     ]
 
-    // 텍스트를 청크로 분할하여 코드 블록 생성
-    const textChunks = splitTextIntoChunks(reportText, 2000)
-    textChunks.forEach((chunk) => {
+    // 진행업무 코드 블록 생성
+    const inProgressChunks = splitTextIntoChunks(inProgressText, 2000)
+    inProgressChunks.forEach((chunk) => {
+      blocks.push(...createCodeBlocks(chunk))
+    })
+
+    // 예정업무 코드 블록 생성
+    const plannedChunks = splitTextIntoChunks(plannedText, 2000)
+    plannedChunks.forEach((chunk) => {
       blocks.push(...createCodeBlocks(chunk))
     })
 

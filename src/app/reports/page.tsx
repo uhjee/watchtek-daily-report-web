@@ -8,6 +8,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
 import { GroupPieChart } from '@/components/GroupPieChart'
 import { DashboardLayout } from '@/components/layout'
+import { ReportTextFormatterService } from '@/lib/services/reportTextFormatterService'
+import { formatDateToShortFormat } from '@/lib/utils/dateUtils'
 import {
   Users,
   Clock,
@@ -18,7 +20,12 @@ import {
   FileUp,
   RefreshCw,
   ExternalLink,
+  FileText,
+  Copy,
 } from 'lucide-react'
+
+// ReportTextFormatterService 인스턴스 생성
+const textFormatter = new ReportTextFormatterService()
 
 // 단일 보고서 데이터 타입
 interface SingleReportData {
@@ -39,6 +46,7 @@ interface SingleReportData {
         person: string
         progress?: number
         manHour: number
+        pmsLink?: string
       }>
     }>
     planned?: Array<{
@@ -48,6 +56,7 @@ interface SingleReportData {
         title: string
         person: string
         manHour: number
+        pmsLink?: string
       }>
     }>
     completed?: Array<{
@@ -58,6 +67,7 @@ interface SingleReportData {
         person: string
         progress?: number
         manHour: number
+        pmsLink?: string
       }>
     }>
   }
@@ -207,20 +217,41 @@ function TaskItem({
   person,
   progress,
   manHour,
+  pmsLink,
+  showManHour = true,
 }: {
   title: string
   person: string
   progress?: number
   manHour: number
+  pmsLink?: string
+  showManHour?: boolean
 }) {
   return (
     <div className="flex items-center justify-between py-2.5 border-b border-border last:border-0">
       <div className="flex-1 min-w-0 pr-4">
-        <p className="text-sm font-medium truncate">{title}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium truncate">{title}</p>
+          {pmsLink && (
+            <a
+              href={pmsLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-shrink-0 text-primary hover:text-primary/80 transition-colors"
+              title="PMS 링크"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          )}
+        </div>
         <div className="flex items-center gap-2 mt-1">
           <span className="text-xs text-muted-foreground">{person}</span>
-          <span className="text-xs text-muted-foreground">•</span>
-          <span className="text-xs text-muted-foreground">{manHour}m/h</span>
+          {showManHour && (
+            <>
+              <span className="text-xs text-muted-foreground">•</span>
+              <span className="text-xs text-muted-foreground">{manHour}m/h</span>
+            </>
+          )}
         </div>
       </div>
       {progress !== undefined && (
@@ -361,13 +392,88 @@ export default function ReportsPage() {
     }
   }, [report])
 
+  // 진행업무 복사 함수
+  const handleCopyInProgress = async () => {
+    if (!report || !report.tasks.inProgress || report.tasks.inProgress.length === 0) return
+
+    const formattedDate = formatDateToShortFormat(report.date)
+    const title = `큐브 파트 일일업무 보고 (${formattedDate})`
+    const taskText = textFormatter.stringifyTasks(report.tasks.inProgress, '진행업무')
+    const text = `${title}\n\n${taskText}`
+
+    try {
+      // Clipboard API 사용 (modern browsers)
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text.trim())
+        toast.success('진행업무가 클립보드에 복사되었습니다.')
+      } else {
+        // Fallback: textarea를 사용한 복사 (older browsers)
+        const textarea = document.createElement('textarea')
+        textarea.value = text.trim()
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        const successful = document.execCommand('copy')
+        document.body.removeChild(textarea)
+
+        if (successful) {
+          toast.success('진행업무가 클립보드에 복사되었습니다.')
+        } else {
+          toast.error('클립보드 복사에 실패했습니다.')
+        }
+      }
+    } catch (error) {
+      console.error('클립보드 복사 오류:', error)
+      toast.error('클립보드 복사에 실패했습니다.')
+    }
+  }
+
+  // 예정업무 복사 함수
+  const handleCopyPlanned = async () => {
+    if (!report || !report.tasks.planned || report.tasks.planned.length === 0) return
+
+    const formattedDate = formatDateToShortFormat(report.date)
+    const title = `큐브 파트 일일업무 보고 (${formattedDate})`
+    const taskText = textFormatter.stringifyTasks(report.tasks.planned, '예정업무')
+    const text = `${title}\n\n${taskText}`
+
+    try {
+      // Clipboard API 사용 (modern browsers)
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text.trim())
+        toast.success('예정업무가 클립보드에 복사되었습니다.')
+      } else {
+        // Fallback: textarea를 사용한 복사 (older browsers)
+        const textarea = document.createElement('textarea')
+        textarea.value = text.trim()
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        const successful = document.execCommand('copy')
+        document.body.removeChild(textarea)
+
+        if (successful) {
+          toast.success('예정업무가 클립보드에 복사되었습니다.')
+        } else {
+          toast.error('클립보드 복사에 실패했습니다.')
+        }
+      }
+    } catch (error) {
+      console.error('클립보드 복사 오류:', error)
+      toast.error('클립보드 복사에 실패했습니다.')
+    }
+  }
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <FileText className="w-6 h-6 text-primary" />
               {report ? `${report.date} 업무 현황` : '업무 현황'}
             </h1>
           </div>
@@ -510,13 +616,24 @@ export default function ReportsPage() {
               {/* 진행업무 */}
               <Card className="shadow-soft">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base font-semibold flex items-center gap-2">
-                    <Briefcase className="w-4 h-4 text-primary" />
-                    진행업무
-                    <span className="ml-auto text-xs font-normal text-muted-foreground">
-                      {stats.totalTasks}건
-                    </span>
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base font-semibold flex items-center gap-2">
+                      <Briefcase className="w-4 h-4 text-primary" />
+                      진행업무
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {stats.totalTasks}건
+                      </span>
+                    </CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleCopyInProgress}
+                      className="h-8 w-8"
+                      title="복사"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="max-h-[500px] overflow-y-auto scrollbar-thin">
                   <div className="space-y-4">
@@ -541,6 +658,7 @@ export default function ReportsPage() {
                                   person={item.person}
                                   manHour={item.manHour}
                                   progress={item.progress}
+                                  pmsLink={item.pmsLink}
                                 />
                               ))}
                             </div>
@@ -555,13 +673,24 @@ export default function ReportsPage() {
               {/* 예정업무 */}
               <Card className="shadow-soft">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base font-semibold flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-[#09c2de]" />
-                    예정업무
-                    <span className="ml-auto text-xs font-normal text-muted-foreground">
-                      {report.tasks.planned?.reduce((sum, g) => sum + g.items.length, 0) || 0}건
-                    </span>
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base font-semibold flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-[#09c2de]" />
+                      예정업무
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {report.tasks.planned?.reduce((sum, g) => sum + g.items.length, 0) || 0}건
+                      </span>
+                    </CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleCopyPlanned}
+                      className="h-8 w-8"
+                      title="복사"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="max-h-[500px] overflow-y-auto scrollbar-thin">
                   {groupedPlannedTasks.length > 0 ? (
@@ -586,6 +715,8 @@ export default function ReportsPage() {
                                     title={item.title}
                                     person={item.person}
                                     manHour={item.manHour}
+                                    pmsLink={item.pmsLink}
+                                    showManHour={false}
                                   />
                                 ))}
                               </div>

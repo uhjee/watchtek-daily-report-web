@@ -58,7 +58,7 @@ export function Header({ sidebarCollapsed = false }: HeaderProps) {
         {/* Left Section */}
         <div className="flex items-center gap-4">
           <h1 className="text-lg font-semibold text-foreground">
-            보고서 관리 시스템
+            큐브파트 관리 시스템
           </h1>
         </div>
 
