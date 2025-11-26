@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useMemo } from 'react'
-import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
+import { PieChart, Pie, Cell, ResponsiveContainer, Sector, Legend } from 'recharts'
 import memberMap from '@/lib/config/members'
 
 // 이름으로 priority 찾기 (이름 기반 매핑)
@@ -21,6 +21,10 @@ interface GroupPieChartProps {
       manHour: number
     }>
   }>
+  /** 클릭으로 선택된 group (외부에서 제어) */
+  selectedGroup?: string | null
+  /** group 클릭 시 호출되는 콜백 */
+  onGroupClick?: (group: string | null) => void
 }
 
 interface ChartDataItem {
@@ -120,10 +124,145 @@ function FixedTooltip({
   )
 }
 
+interface ShapeProps {
+  cx: number
+  cy: number
+  midAngle: number
+  innerRadius: number
+  outerRadius: number
+  startAngle: number
+  endAngle: number
+  fill: string
+  payload: ChartDataItem
+  percent: number
+  value: number
+}
+
+// Active Shape 렌더러 (hover 시 확장된 섹터 + 라벨)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const renderActiveShape = (props: any) => {
+  const RADIAN = Math.PI / 180
+  const {
+    cx,
+    cy,
+    midAngle,
+    innerRadius,
+    outerRadius,
+    startAngle,
+    endAngle,
+    fill,
+    payload,
+    percent,
+    value,
+  } = props as ShapeProps
+  const sin = Math.sin(-RADIAN * midAngle)
+  const cos = Math.cos(-RADIAN * midAngle)
+  const sx = cx + (outerRadius + 10) * cos
+  const sy = cy + (outerRadius + 10) * sin
+  const mx = cx + (outerRadius + 25) * cos
+  const my = cy + (outerRadius + 25) * sin
+  const ex = mx + (cos >= 0 ? 1 : -1) * 16
+  const ey = my
+  const textAnchor = cos >= 0 ? 'start' : 'end'
+
+  const manDay = Math.round((value / 8) * 10) / 10
+  const percentage = Math.round(percent * 100)
+
+  return (
+    <g>
+      {/* 중앙 텍스트 */}
+      <text x={cx} y={cy} dy={-4} textAnchor="middle" className="fill-foreground text-sm font-medium" style={{ pointerEvents: 'none' }}>
+        {payload.name}
+      </text>
+      <text x={cx} y={cy} dy={14} textAnchor="middle" className="fill-muted-foreground text-xs" style={{ pointerEvents: 'none' }}>
+        {manDay}m/d ({percentage}%)
+      </text>
+      {/* 메인 섹터 (확장) */}
+      <Sector
+        cx={cx}
+        cy={cy}
+        innerRadius={innerRadius}
+        outerRadius={outerRadius + 6}
+        startAngle={startAngle}
+        endAngle={endAngle}
+        fill={fill}
+      />
+      {/* 확장된 외곽 섹터 */}
+      <Sector
+        cx={cx}
+        cy={cy}
+        startAngle={startAngle}
+        endAngle={endAngle}
+        innerRadius={outerRadius + 12}
+        outerRadius={outerRadius + 16}
+        fill={fill}
+      />
+      {/* 라벨 연결선 */}
+      <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={fill} fill="none" strokeWidth={2} style={{ pointerEvents: 'none' }} />
+      <circle cx={ex} cy={ey} r={3} fill={fill} stroke="none" style={{ pointerEvents: 'none' }} />
+      {/* 라벨 텍스트 */}
+      <text
+        x={ex + (cos >= 0 ? 1 : -1) * 6}
+        y={ey}
+        textAnchor={textAnchor}
+        className="fill-foreground text-xs font-medium"
+        style={{ pointerEvents: 'none' }}
+      >
+        {payload.name}
+      </text>
+      <text
+        x={ex + (cos >= 0 ? 1 : -1) * 6}
+        y={ey}
+        dy={14}
+        textAnchor={textAnchor}
+        className="fill-muted-foreground text-[11px]"
+        style={{ pointerEvents: 'none' }}
+      >
+        {`${manDay}m/d (${percentage}%)`}
+      </text>
+    </g>
+  )
+}
+
+// 커스텀 범례 렌더러
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const renderLegend = (props: any) => {
+  const { payload } = props
+  if (!payload) return null
+
+  // m/d 내림차순으로 정렬
+  const sortedPayload = [...payload].sort((a, b) => {
+    const aValue = a.payload?.value ?? 0
+    const bValue = b.payload?.value ?? 0
+    return bValue - aValue
+  })
+
+  return (
+    <ul className="flex flex-col gap-1.5 text-xs">
+      {sortedPayload.map((entry, index) => {
+        const manDay = entry.payload?.value ? Math.round((entry.payload.value / 8) * 10) / 10 : 0
+        return (
+          <li key={`legend-${index}`} className="flex items-center gap-2">
+            <span
+              className="w-3 h-3 rounded-sm flex-shrink-0"
+              style={{ backgroundColor: entry.color }}
+            />
+            <span className="text-foreground truncate">{entry.value}</span>
+            <span className="text-muted-foreground ml-auto">{manDay}m/d</span>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 /**
  * Group별 공수를 파이 차트로 표시하는 컴포넌트
  */
-export function GroupPieChart({ tasks }: GroupPieChartProps) {
+export function GroupPieChart({ tasks, selectedGroup, onGroupClick }: GroupPieChartProps) {
+  // Active 인덱스 상태 (hover용)
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+
   // 툴팁 상태 관리
   const [tooltipData, setTooltipData] = useState<TooltipData | null>(null)
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 })
@@ -133,7 +272,10 @@ export function GroupPieChart({ tasks }: GroupPieChartProps) {
   // 마우스 이벤트 핸들러
   const handlePieMouseEnter = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (data: ChartDataItem, _index: number, e: any) => {
+    (data: ChartDataItem, index: number, e: any) => {
+      // Hover 인덱스 업데이트
+      setHoverIndex(index)
+
       // Recharts 이벤트 객체에서 마우스 좌표 추출
       const mouseEvent = e as MouseEvent
       const clientX = mouseEvent?.clientX ?? 0
@@ -161,6 +303,7 @@ export function GroupPieChart({ tasks }: GroupPieChartProps) {
   }, [])
 
   const handlePieMouseLeave = useCallback(() => {
+    setHoverIndex(null)
     setIsPieHovered(false)
     // 툴팁이 hover되지 않은 경우에만 숨김
     setTimeout(() => {
@@ -181,6 +324,28 @@ export function GroupPieChart({ tasks }: GroupPieChartProps) {
     setIsTooltipHovered(false)
     setTooltipData(null)
   }, [])
+
+  // 클릭 이벤트 핸들러 (Pie 컴포넌트용)
+  const handlePieClick = useCallback(
+    (data: ChartDataItem, index: number, e: React.MouseEvent) => {
+      // 이벤트 버블링 방지 (PieChart의 onClick이 호출되지 않도록)
+      e.stopPropagation()
+
+      console.log('Pie onClick triggered:', data, index)
+      if (!onGroupClick) return
+
+      const clickedName = data?.name
+      if (!clickedName) return
+
+      // 같은 영역 클릭 시 선택 해제, 다른 영역 클릭 시 새로 선택
+      if (selectedGroup === clickedName) {
+        onGroupClick(null)
+      } else {
+        onGroupClick(clickedName)
+      }
+    },
+    [onGroupClick, selectedGroup]
+  )
 
   // 툴팁 표시 여부 (position이 유효할 때만)
   const showTooltip =
@@ -224,59 +389,76 @@ export function GroupPieChart({ tasks }: GroupPieChartProps) {
     >
   )
 
-  // 차트 데이터 형식으로 변환 (items 정보 포함)
-  const chartData: ChartDataItem[] = Object.entries(groupData).map(([name, data]) => ({
-    name,
-    value: data.totalManHour,
-    items: data.items,
-  }))
+  // 차트 데이터 형식으로 변환 (items 정보 포함) + m/d 내림차순 정렬
+  const chartData: ChartDataItem[] = Object.entries(groupData)
+    .map(([name, data]) => ({
+      name,
+      value: data.totalManHour,
+      items: data.items,
+    }))
+    .sort((a, b) => b.value - a.value)
 
   // 총 공수 계산
   const totalManHour = chartData.reduce((sum, item) => sum + item.value, 0)
   const totalManDay = Math.round((totalManHour / 8) * 10) / 10
 
-  // 커스텀 라벨 렌더러 (m/d와 % 표시)
-  const renderCustomLabel = ({
-    name,
-    value,
-    percent,
-  }: {
-    name?: string
-    value?: number
-    percent?: number
-  }) => {
-    if (!name || value === undefined || percent === undefined) return ''
-    const manDay = Math.round((value / 8) * 10) / 10
-    const percentage = Math.round(percent * 100)
-    return `${name} (${manDay}m/d, ${percentage}%)`
-  }
+  // 선택된 group의 인덱스 계산
+  const selectedIndex = useMemo(() => {
+    if (!selectedGroup) return null
+    return chartData.findIndex((item) => item.name === selectedGroup)
+  }, [selectedGroup, chartData])
+
+  // activeIndex 결정: hover 중이면 hoverIndex, 아니면 selectedIndex
+  const activeIndex = hoverIndex !== null ? hoverIndex : (selectedIndex !== null && selectedIndex >= 0 ? selectedIndex : undefined)
+
+
+  // PieChart 빈 영역 클릭 시 필터 해제
+  const handleChartClick = useCallback(() => {
+    // 이 핸들러는 Pie 영역 클릭 시에는 호출되지 않음 (이벤트 버블링 방지)
+    // 빈 영역 클릭 시에만 호출됨
+    if (onGroupClick && selectedGroup) {
+      onGroupClick(null)
+    }
+  }, [onGroupClick, selectedGroup])
 
   return (
     <div className="h-full flex flex-col">
       <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
+        <PieChart
+          margin={{ top: 5, right: 5, bottom: 5, left: 5 }}
+          onClick={onGroupClick ? handleChartClick : undefined}
+        >
           <Pie
+            activeIndex={activeIndex}
+            activeShape={renderActiveShape}
             data={chartData}
-            cx="50%"
+            cx="35%"
             cy="50%"
-            labelLine={false}
-            label={renderCustomLabel}
-            outerRadius={80}
+            innerRadius="40%"
+            outerRadius="70%"
             fill="#8884d8"
             dataKey="value"
-            isAnimationActive={false}
+            isAnimationActive={true}
             onMouseEnter={handlePieMouseEnter}
             onMouseMove={handlePieMouseMove}
             onMouseLeave={handlePieMouseLeave}
+            onClick={onGroupClick ? handlePieClick : undefined}
           >
             {chartData.map((_, index) => (
               <Cell
                 key={`cell-${index}`}
                 fill={COLORS[index % COLORS.length]}
-                style={{ cursor: 'pointer' }}
+                cursor={onGroupClick ? 'pointer' : 'default'}
               />
             ))}
           </Pie>
+          <Legend
+            content={renderLegend}
+            layout="vertical"
+            align="right"
+            verticalAlign="middle"
+            wrapperStyle={{ paddingLeft: 20 }}
+          />
         </PieChart>
       </ResponsiveContainer>
       <div className="text-center text-sm text-muted-foreground mt-2">

@@ -23,7 +23,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ListTodo, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, FileSpreadsheet } from 'lucide-react'
+import { ListTodo, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, FileSpreadsheet, TrendingUp } from 'lucide-react'
+import { GroupPieChart } from '@/components/GroupPieChart'
 import memberMap from '@/lib/config/members'
 import { DailyReport } from '@/lib/types/report'
 import { downloadMonthlyTasksExcel } from '@/lib/utils/excelUtils'
@@ -78,6 +79,8 @@ export default function MonthlyTasksPage() {
   const [selectedMember, setSelectedMember] = useState(defaultMember.name)
   const [sortField, setSortField] = useState<SortField | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>(null)
+  // 2차 필터: 선택된 group (파이차트 클릭)
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null)
 
   // 데이터 조회
   const { data, isLoading } = useQuery({
@@ -85,6 +88,35 @@ export default function MonthlyTasksPage() {
     queryFn: () => fetchMonthlyTasks(selectedYear, selectedMonth),
     staleTime: 5 * 60 * 1000, // 5분
   })
+
+  // 1차 필터 변경 시 group 초기화 및 정렬 초기화
+  const handleYearChange = (value: string) => {
+    setSelectedYear(parseInt(value))
+    setSelectedGroup(null)
+    setSortField(null)
+    setSortDirection(null)
+  }
+
+  const handleMonthChange = (value: string) => {
+    setSelectedMonth(parseInt(value))
+    setSelectedGroup(null)
+    setSortField(null)
+    setSortDirection(null)
+  }
+
+  const handleMemberChange = (value: string) => {
+    setSelectedMember(value)
+    setSelectedGroup(null)
+    setSortField(null)
+    setSortDirection(null)
+  }
+
+  // group 클릭 핸들러 (정렬 초기화)
+  const handleGroupClick = (group: string | null) => {
+    setSelectedGroup(group)
+    setSortField(null)
+    setSortDirection(null)
+  }
 
   // 정렬 핸들러
   const handleSort = (field: SortField) => {
@@ -105,11 +137,11 @@ export default function MonthlyTasksPage() {
     }
   }
 
-  // 선택된 멤버로 필터링 + 완료일 기준 필터링 + 정렬
-  const filteredTasks = useMemo(() => {
+  // 선택된 멤버로 필터링 + 완료일 기준 필터링 (정렬 제외)
+  const baseFilteredTasks = useMemo(() => {
     if (!data?.tasks) return []
 
-    const filtered = data.tasks.filter((task) => {
+    return data.tasks.filter((task) => {
       // 멤버 필터
       if (task.person !== selectedMember) return false
 
@@ -123,10 +155,18 @@ export default function MonthlyTasksPage() {
 
       return taskYear === selectedYear && taskMonth === selectedMonth
     })
+  }, [data, selectedMember, selectedYear, selectedMonth])
+
+  // 테이블용 정렬된 태스크 (2차 필터: group 적용)
+  const sortedTasks = useMemo(() => {
+    // 2차 필터: selectedGroup이 있으면 해당 group만 필터링
+    const tasks = selectedGroup
+      ? baseFilteredTasks.filter((task) => task.group === selectedGroup)
+      : [...baseFilteredTasks]
 
     // 정렬 적용
     if (sortField && sortDirection) {
-      return filtered.sort((a, b) => {
+      return tasks.sort((a, b) => {
         let compareResult = 0
 
         switch (sortField) {
@@ -167,7 +207,7 @@ export default function MonthlyTasksPage() {
     // 기본 정렬: 완료일 오름차순, 단 특정 Group은 우선순위 낮춤
     const lowPriorityGroups = ['회의', '기타']
 
-    return filtered.sort((a, b) => {
+    return tasks.sort((a, b) => {
       const aIsLowPriority = lowPriorityGroups.includes(a.group)
       const bIsLowPriority = lowPriorityGroups.includes(b.group)
 
@@ -182,13 +222,36 @@ export default function MonthlyTasksPage() {
 
       return new Date(aDate).getTime() - new Date(bDate).getTime()
     })
-  }, [data, selectedMember, selectedYear, selectedMonth, sortField, sortDirection])
+  }, [baseFilteredTasks, selectedGroup, sortField, sortDirection])
 
   // 총 공수 계산 (m/d)
   const totalManDays = useMemo(() => {
-    const totalManHours = filteredTasks.reduce((sum, task) => sum + task.manHour, 0)
+    const totalManHours = baseFilteredTasks.reduce((sum, task) => sum + task.manHour, 0)
     return (totalManHours / 8).toFixed(1)
-  }, [filteredTasks])
+  }, [baseFilteredTasks])
+
+  // GroupPieChart용 데이터 변환 (정렬과 무관)
+  const pieChartData = useMemo(() => {
+    // Group별로 tasks를 집계
+    const groupMap = new Map<string, DailyReport[]>()
+
+    baseFilteredTasks.forEach((task) => {
+      const existing = groupMap.get(task.group) || []
+      groupMap.set(task.group, [...existing, task])
+    })
+
+    // GroupPieChart가 기대하는 형태로 변환
+    return Array.from(groupMap.entries()).map(([group, tasks]) => ({
+      group,
+      subGroup: '',
+      items: tasks.map((task) => ({
+        title: task.title,
+        person: task.person,
+        progress: task.progressRate,
+        manHour: task.manHour,
+      })),
+    }))
+  }, [baseFilteredTasks])
 
   // 엑셀 다운로드 핸들러
   const handleExcelDownload = () => {
@@ -270,7 +333,7 @@ export default function MonthlyTasksPage() {
                 </Label>
                 <Select
                   value={selectedYear.toString()}
-                  onValueChange={(value) => setSelectedYear(parseInt(value))}
+                  onValueChange={handleYearChange}
                 >
                   <SelectTrigger id="year-select" className="w-[110px] h-9">
                     <SelectValue />
@@ -291,7 +354,7 @@ export default function MonthlyTasksPage() {
                 </Label>
                 <Select
                   value={selectedMonth.toString()}
-                  onValueChange={(value) => setSelectedMonth(parseInt(value))}
+                  onValueChange={handleMonthChange}
                 >
                   <SelectTrigger id="month-select" className="w-[90px] h-9">
                     <SelectValue />
@@ -313,7 +376,7 @@ export default function MonthlyTasksPage() {
             {/* 멤버 선택 */}
             <div className="flex items-center gap-2">
               <Label className="text-sm font-medium whitespace-nowrap">담당자</Label>
-              <RadioGroup value={selectedMember} onValueChange={setSelectedMember}>
+              <RadioGroup value={selectedMember} onValueChange={handleMemberChange}>
                 <div className="flex items-center gap-3">
                   {members.map((member) => (
                     <div key={member.email} className="flex items-center space-x-1.5">
@@ -332,6 +395,33 @@ export default function MonthlyTasksPage() {
           </div>
         </div>
 
+        {/* Pie Chart */}
+        <Card className="shadow-soft">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-primary" />
+              Group별 업무
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="h-[320px]">
+            {isLoading ? (
+              <div className="flex items-center justify-center h-full">
+                <Skeleton className="h-48 w-48 rounded-full" />
+              </div>
+            ) : baseFilteredTasks.length > 0 ? (
+              <GroupPieChart
+                tasks={pieChartData}
+                selectedGroup={selectedGroup}
+                onGroupClick={handleGroupClick}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                데이터가 없습니다
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Table */}
         <Card className="shadow-soft">
           <CardHeader className="pt-4 pb-3 px-6">
@@ -339,7 +429,7 @@ export default function MonthlyTasksPage() {
               <CardTitle className="text-base font-semibold flex items-center gap-2">
                 <span>[{selectedMember}] 업무목록</span>
                 <span className="text-sm font-normal text-muted-foreground">
-                  총{filteredTasks.length}건 / 총{totalManDays}m/d
+                  총{sortedTasks.length}건 / 총{totalManDays}m/d
                 </span>
               </CardTitle>
               <Button
@@ -361,12 +451,11 @@ export default function MonthlyTasksPage() {
                   <Skeleton key={i} className="h-12 w-full" />
                 ))}
               </div>
-            ) : filteredTasks.length > 0 ? (
-              <div className="overflow-x-auto">
-                <Table>
+            ) : sortedTasks.length > 0 ? (
+              <Table className="w-full">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-12">#</TableHead>
+                      <TableHead className="w-10">#</TableHead>
                       <TableHead className="w-32">
                         <Button
                           variant="ghost"
@@ -378,7 +467,7 @@ export default function MonthlyTasksPage() {
                           {renderSortIcon('group')}
                         </Button>
                       </TableHead>
-                      <TableHead className="w-28">
+                      <TableHead className="w-20">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -400,7 +489,7 @@ export default function MonthlyTasksPage() {
                           {renderSortIcon('title')}
                         </Button>
                       </TableHead>
-                      <TableHead className="w-28">
+                      <TableHead className="w-24">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -411,7 +500,7 @@ export default function MonthlyTasksPage() {
                           {renderSortIcon('plannedDate')}
                         </Button>
                       </TableHead>
-                      <TableHead className="w-28">
+                      <TableHead className="w-24">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -422,7 +511,7 @@ export default function MonthlyTasksPage() {
                           {renderSortIcon('completionDate')}
                         </Button>
                       </TableHead>
-                      <TableHead className="w-20 text-right">
+                      <TableHead className="w-16 text-right">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -433,7 +522,7 @@ export default function MonthlyTasksPage() {
                           {renderSortIcon('manHour')}
                         </Button>
                       </TableHead>
-                      <TableHead className="w-20 text-right">
+                      <TableHead className="w-16 text-right">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -447,7 +536,7 @@ export default function MonthlyTasksPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredTasks.map((task, index) => {
+                    {sortedTasks.map((task, index) => {
                       const manDays = (task.manHour / 8).toFixed(1)
                       return (
                         <TableRow key={task.id}>
@@ -472,7 +561,7 @@ export default function MonthlyTasksPage() {
                               '-'
                             )}
                           </TableCell>
-                          <TableCell className="max-w-md" title={task.title}>
+                          <TableCell title={task.title}>
                             {task.title}
                           </TableCell>
                           <TableCell>-</TableCell>
@@ -490,7 +579,6 @@ export default function MonthlyTasksPage() {
                     })}
                   </TableBody>
                 </Table>
-              </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <ListTodo className="w-12 h-12 mb-3 opacity-50" />
