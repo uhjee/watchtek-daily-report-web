@@ -55,8 +55,9 @@ function transformNotionPageToTask(page: NotionPage): DailyReport | null {
         start: dateInfo.start,
         end: dateInfo.end,
       },
-      isToday: props.isToday?.formula?.boolean || false,
-      isTomorrow: props.isTomorrow?.formula?.boolean || false,
+      // isToday, isTomorrow는 필요시 클라이언트에서 계산
+      isToday: false,
+      isTomorrow: false,
       manHour,
       pmsNumber,
       pmsLink,

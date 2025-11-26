@@ -37,7 +37,7 @@ export function Header({ sidebarCollapsed = false }: HeaderProps) {
     getThemeSnapshot,
     () => true // 서버 사이드에서 기본값 dark
   )
-  const [isDark, setIsDark] = useState(true) // 기본값 dark
+  const [isDark, setIsDark] = useState(isDarkFromStore)
 
   const toggleTheme = () => {
     const newIsDark = !isDark

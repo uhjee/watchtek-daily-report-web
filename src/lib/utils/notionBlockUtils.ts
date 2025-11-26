@@ -76,7 +76,6 @@ export function createHeading1Block(
           text: {
             content: text,
           },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           annotations: color
             ? {
                 bold: false,
@@ -114,7 +113,6 @@ export function createHeading2Block(
           text: {
             content: text,
           },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           annotations: color
             ? {
                 bold: false,

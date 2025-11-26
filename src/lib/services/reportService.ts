@@ -94,11 +94,13 @@ export class ReportService {
     const processedReports = distinctReports
 
     // 5. 그룹화 및 정렬
+    // 진행업무: isToday가 true인 작업
     const inProgressTasks = this.groupByProjectAndSubGroup(
       processedReports.filter((r) => r.isToday)
     )
+    // 예정업무: isTomorrow가 true이거나, 진행 중이면서 완료되지 않은 작업 (progress < 100)
     const plannedTasks = this.groupByProjectAndSubGroup(
-      processedReports.filter((r) => r.isTomorrow && !r.isToday)
+      processedReports.filter((r) => r.isTomorrow || (r.isToday && r.progressRate < 100))
     )
 
     // 6. 주간 데이터 조회 및 공수 집계 (일간 보고서 상단용)
@@ -749,23 +751,24 @@ export class ReportService {
     const today = getToday()
     const tomorrow = this.getTomorrow(today)
 
+    // 넓은 범위로 조회 (이번 주 전체)
+    // transformNotionData에서 isToday/isTomorrow를 정확히 계산하므로
+    // 여기서는 넓게 가져오고 나중에 필터링
+    const { startDate } = getThisWeekMondayToToday(today)
+
     const filter = {
       and: [
         {
-          or: [
-            {
-              property: 'Date',
-              date: {
-                equals: today,
-              },
-            },
-            {
-              property: 'Date',
-              date: {
-                equals: tomorrow,
-              },
-            },
-          ],
+          property: 'Date',
+          date: {
+            on_or_after: startDate,
+          },
+        },
+        {
+          property: 'Date',
+          date: {
+            on_or_before: tomorrow,
+          },
         },
         {
           property: 'Person',
@@ -852,6 +855,18 @@ export class ReportService {
 
       // Date 필드에서 날짜 추출
       const dateStart = ((properties.Date as Record<string, Record<string, string>>)?.date?.start as string) ?? ''
+      const dateEnd = ((properties.Date as Record<string, Record<string, string | null>>)?.date?.end as string | null) ?? null
+
+      // Date 범위를 고려한 isToday, isTomorrow 계산
+      // start ~ end 범위에 today 또는 tomorrow가 포함되는지 확인
+      const checkDateInRange = (targetDate: string, start: string, end: string | null): boolean => {
+        if (!start) return false
+        const target = new Date(targetDate)
+        const rangeStart = new Date(start)
+        const rangeEnd = end ? new Date(end) : rangeStart
+
+        return target >= rangeStart && target <= rangeEnd
+      }
 
       return {
         id: typedPage.id || '',
@@ -862,11 +877,11 @@ export class ReportService {
         progressRate: ((this.extractProperty(typedPage as unknown as Record<string, unknown>, 'Progress', 'number') as number) ?? 0) * 100,
         date: {
           start: dateStart,
-          end: ((properties.Date as Record<string, Record<string, string | null>>)?.date?.end as string | null) ?? null,
+          end: dateEnd,
         },
-        // getToday() 기준으로 isToday, isTomorrow 계산 (Notion formula 대신)
-        isToday: dateStart === today,
-        isTomorrow: dateStart === tomorrow,
+        // Date 범위를 고려하여 isToday, isTomorrow 계산
+        isToday: checkDateInRange(today, dateStart, dateEnd),
+        isTomorrow: checkDateInRange(tomorrow, dateStart, dateEnd),
         manHour: (this.extractProperty(typedPage as unknown as Record<string, unknown>, 'ManHour', 'number') as number) ?? 0,
         pmsNumber: this.extractProperty(typedPage as unknown as Record<string, unknown>, 'PmsNumber', 'number') as number | undefined,
         pmsLink: ((this.extractProperty(typedPage as unknown as Record<string, unknown>, 'PmsLink', 'formula') as Record<string, string>)?.string as string) || undefined,
@@ -1192,7 +1207,6 @@ export class ReportService {
    * 인원별 공수를 집계한다
    * @deprecated 현재 사용되지 않음. calculateWeeklyManHourSummary 사용
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private calculateManHourSummary(reports: DailyReport[]) {
     const manHourMap = new Map<string, { hours: number; isCompleted: boolean }>()
 

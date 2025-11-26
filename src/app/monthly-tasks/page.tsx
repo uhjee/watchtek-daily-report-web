@@ -23,9 +23,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ListTodo, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
+import { ListTodo, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, FileSpreadsheet } from 'lucide-react'
 import memberMap from '@/lib/config/members'
 import { DailyReport } from '@/lib/types/report'
+import { downloadMonthlyTasksExcel } from '@/lib/utils/excelUtils'
 
 type SortField = 'group' | 'pmsNumber' | 'title' | 'plannedDate' | 'completionDate' | 'manHour' | 'manDay'
 type SortDirection = 'asc' | 'desc' | null
@@ -181,13 +182,56 @@ export default function MonthlyTasksPage() {
 
       return new Date(aDate).getTime() - new Date(bDate).getTime()
     })
-  }, [data?.tasks, selectedMember, selectedYear, selectedMonth, sortField, sortDirection])
+  }, [data, selectedMember, selectedYear, selectedMonth, sortField, sortDirection])
 
   // 총 공수 계산 (m/d)
   const totalManDays = useMemo(() => {
     const totalManHours = filteredTasks.reduce((sum, task) => sum + task.manHour, 0)
     return (totalManHours / 8).toFixed(1)
   }, [filteredTasks])
+
+  // 엑셀 다운로드 핸들러
+  const handleExcelDownload = () => {
+    if (!data?.tasks) return
+
+    // 모든 멤버별로 필터링된 업무 목록 생성
+    const lowPriorityGroups = ['회의', '기타']
+
+    const memberTasksMap = members.map((member) => {
+      const tasks = data.tasks
+        .filter((task) => {
+          // 멤버 필터
+          if (task.person !== member.name) return false
+
+          // 완료일 기준 필터링
+          const completionDate = task.date.end || task.date.start
+          if (!completionDate) return false
+
+          const taskDate = new Date(completionDate)
+          const taskYear = taskDate.getFullYear()
+          const taskMonth = taskDate.getMonth() + 1
+
+          return taskYear === selectedYear && taskMonth === selectedMonth
+        })
+        .sort((a, b) => {
+          // 기본 정렬: 회의/기타 우선순위 낮춤, 완료일 오름차순
+          const aIsLowPriority = lowPriorityGroups.includes(a.group)
+          const bIsLowPriority = lowPriorityGroups.includes(b.group)
+
+          if (aIsLowPriority !== bIsLowPriority) {
+            return aIsLowPriority ? 1 : -1
+          }
+
+          const aDate = a.date.end || a.date.start
+          const bDate = b.date.end || b.date.start
+          return new Date(aDate).getTime() - new Date(bDate).getTime()
+        })
+
+      return { name: member.name, tasks }
+    })
+
+    downloadMonthlyTasksExcel(selectedYear, selectedMonth, memberTasksMap)
+  }
 
   // 정렬 아이콘 렌더링
   const renderSortIcon = (field: SortField) => {
@@ -291,12 +335,24 @@ export default function MonthlyTasksPage() {
         {/* Table */}
         <Card className="shadow-soft">
           <CardHeader className="pt-4 pb-3 px-6">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <span>[{selectedMember}] 업무목록</span>
-              <span className="text-sm font-normal text-muted-foreground">
-                총{filteredTasks.length}건 / 총{totalManDays}m/d
-              </span>
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <span>[{selectedMember}] 업무목록</span>
+                <span className="text-sm font-normal text-muted-foreground">
+                  총{filteredTasks.length}건 / 총{totalManDays}m/d
+                </span>
+              </CardTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExcelDownload}
+                disabled={isLoading || !data?.tasks}
+                className="flex items-center gap-1.5"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                엑셀
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="pt-0 px-6 pb-4">
             {isLoading ? (

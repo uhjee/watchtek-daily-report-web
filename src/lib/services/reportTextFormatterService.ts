@@ -50,19 +50,47 @@ export class ReportTextFormatterService {
   ): string {
     let result = `${type === '진행업무' ? '업무 진행 사항' : '업무 계획 사항'}\n`
 
-    tasks.forEach((task, index) => {
-      result += `${index + 1}. ${task.group}\n`
-      result += `[${task.subGroup}]\n`
+    // Group별로 묶기
+    const groupedByGroup = new Map<string, Array<{
+      subGroup: string
+      items: Array<{
+        title: string
+        person: string
+        progress?: number
+        manHour: number
+      }>
+    }>>()
 
-      task.items.forEach((item) => {
-        let itemText = `- ${item.title}(${item.person}`
-        if (type === '진행업무' && item.progress !== undefined) {
-          itemText += `, ${item.progress}%`
-        }
-        itemText += `)\n`
-        result += itemText
+    tasks.forEach((task) => {
+      if (!groupedByGroup.has(task.group)) {
+        groupedByGroup.set(task.group, [])
+      }
+      groupedByGroup.get(task.group)!.push({
+        subGroup: task.subGroup,
+        items: task.items,
       })
+    })
+
+    // Group 번호 매기기
+    let groupIndex = 1
+    groupedByGroup.forEach((subGroups, group) => {
+      result += `${groupIndex}. ${group}\n`
+
+      subGroups.forEach((subGroup) => {
+        result += `[${subGroup.subGroup}]\n`
+
+        subGroup.items.forEach((item) => {
+          let itemText = `- ${item.title}(${item.person}`
+          if (type === '진행업무' && item.progress !== undefined) {
+            itemText += `, ${item.progress}%`
+          }
+          itemText += `)\n`
+          result += itemText
+        })
+      })
+
       result += '\n'
+      groupIndex++
     })
 
     return result

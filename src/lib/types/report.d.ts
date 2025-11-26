@@ -82,16 +82,6 @@ export interface NotionPage {
         end: string | null;
       };
     };
-    isToday: {
-      formula: {
-        boolean: boolean;
-      };
-    };
-    isTomorrow: {
-      formula: {
-        boolean: boolean;
-      };
-    };
     ManHour: {
       number: number;
     };
