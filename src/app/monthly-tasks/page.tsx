@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { DashboardLayout } from '@/components/layout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
@@ -22,9 +23,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ListTodo, ExternalLink } from 'lucide-react'
+import { ListTodo, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import memberMap from '@/lib/config/members'
 import { DailyReport } from '@/lib/types/report'
+
+type SortField = 'group' | 'pmsNumber' | 'title' | 'plannedDate' | 'completionDate' | 'manHour' | 'manDay'
+type SortDirection = 'asc' | 'desc' | null
 
 interface MonthlyTasksResponse {
   year: number
@@ -71,6 +75,8 @@ export default function MonthlyTasksPage() {
   const [selectedYear, setSelectedYear] = useState(currentYear)
   const [selectedMonth, setSelectedMonth] = useState(currentMonth)
   const [selectedMember, setSelectedMember] = useState(defaultMember.name)
+  const [sortField, setSortField] = useState<SortField | null>(null)
+  const [sortDirection, setSortDirection] = useState<SortDirection>(null)
 
   // 데이터 조회
   const { data, isLoading } = useQuery({
@@ -79,7 +85,26 @@ export default function MonthlyTasksPage() {
     staleTime: 5 * 60 * 1000, // 5분
   })
 
-  // 선택된 멤버로 필터링 + 완료일 기준 필터링
+  // 정렬 핸들러
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      // 같은 필드 클릭: null -> asc -> desc -> null 순환
+      if (sortDirection === null) {
+        setSortDirection('asc')
+      } else if (sortDirection === 'asc') {
+        setSortDirection('desc')
+      } else {
+        setSortField(null)
+        setSortDirection(null)
+      }
+    } else {
+      // 다른 필드 클릭: 새로운 필드로 asc 시작
+      setSortField(field)
+      setSortDirection('asc')
+    }
+  }
+
+  // 선택된 멤버로 필터링 + 완료일 기준 필터링 + 정렬
   const filteredTasks = useMemo(() => {
     if (!data?.tasks) return []
 
@@ -98,7 +123,47 @@ export default function MonthlyTasksPage() {
       return taskYear === selectedYear && taskMonth === selectedMonth
     })
 
-    // 정렬: 완료일 오름차순, 단 특정 Group은 우선순위 낮춤
+    // 정렬 적용
+    if (sortField && sortDirection) {
+      return filtered.sort((a, b) => {
+        let compareResult = 0
+
+        switch (sortField) {
+          case 'group':
+            compareResult = a.group.localeCompare(b.group, 'ko')
+            break
+          case 'pmsNumber':
+            const aNum = a.pmsNumber?.toString() || ''
+            const bNum = b.pmsNumber?.toString() || ''
+            compareResult = aNum.localeCompare(bNum)
+            break
+          case 'title':
+            compareResult = a.title.localeCompare(b.title, 'ko')
+            break
+          case 'plannedDate':
+            // 계획 완료일은 현재 데이터에 없으므로 0 반환
+            compareResult = 0
+            break
+          case 'completionDate':
+            const aDate = a.date.end || a.date.start
+            const bDate = b.date.end || b.date.start
+            compareResult = new Date(aDate).getTime() - new Date(bDate).getTime()
+            break
+          case 'manHour':
+            compareResult = a.manHour - b.manHour
+            break
+          case 'manDay':
+            const aManDay = a.manHour / 8
+            const bManDay = b.manHour / 8
+            compareResult = aManDay - bManDay
+            break
+        }
+
+        return sortDirection === 'asc' ? compareResult : -compareResult
+      })
+    }
+
+    // 기본 정렬: 완료일 오름차순, 단 특정 Group은 우선순위 낮춤
     const lowPriorityGroups = ['회의', '기타']
 
     return filtered.sort((a, b) => {
@@ -116,13 +181,30 @@ export default function MonthlyTasksPage() {
 
       return new Date(aDate).getTime() - new Date(bDate).getTime()
     })
-  }, [data?.tasks, selectedMember, selectedYear, selectedMonth])
+  }, [data?.tasks, selectedMember, selectedYear, selectedMonth, sortField, sortDirection])
 
   // 총 공수 계산 (m/d)
   const totalManDays = useMemo(() => {
     const totalManHours = filteredTasks.reduce((sum, task) => sum + task.manHour, 0)
     return (totalManHours / 8).toFixed(1)
   }, [filteredTasks])
+
+  // 정렬 아이콘 렌더링
+  const renderSortIcon = (field: SortField) => {
+    const isActive = sortField === field && sortDirection !== null
+    const iconClass = isActive ? 'ml-2 h-4 w-4 text-primary' : 'ml-2 h-4 w-4'
+
+    if (sortField !== field) {
+      return <ArrowUpDown className={iconClass} />
+    }
+    if (sortDirection === 'asc') {
+      return <ArrowUp className={iconClass} />
+    }
+    if (sortDirection === 'desc') {
+      return <ArrowDown className={iconClass} />
+    }
+    return <ArrowUpDown className={iconClass} />
+  }
 
   return (
     <DashboardLayout>
@@ -229,13 +311,83 @@ export default function MonthlyTasksPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-12">#</TableHead>
-                      <TableHead className="w-32">업무구분</TableHead>
-                      <TableHead className="w-28">PMS 관리번호</TableHead>
-                      <TableHead>업무 내용</TableHead>
-                      <TableHead className="w-28">계획 완료일</TableHead>
-                      <TableHead className="w-28">완료일</TableHead>
-                      <TableHead className="w-20 text-right">M/H</TableHead>
-                      <TableHead className="w-20 text-right">M/D</TableHead>
+                      <TableHead className="w-32">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="-ml-3 h-8 data-[state=open]:bg-accent"
+                          onClick={() => handleSort('group')}
+                        >
+                          <span>업무구분</span>
+                          {renderSortIcon('group')}
+                        </Button>
+                      </TableHead>
+                      <TableHead className="w-28">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="-ml-3 h-8 data-[state=open]:bg-accent"
+                          onClick={() => handleSort('pmsNumber')}
+                        >
+                          <span>PMS 관리번호</span>
+                          {renderSortIcon('pmsNumber')}
+                        </Button>
+                      </TableHead>
+                      <TableHead>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="-ml-3 h-8 data-[state=open]:bg-accent"
+                          onClick={() => handleSort('title')}
+                        >
+                          <span>업무 내용</span>
+                          {renderSortIcon('title')}
+                        </Button>
+                      </TableHead>
+                      <TableHead className="w-28">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="-ml-3 h-8 data-[state=open]:bg-accent"
+                          onClick={() => handleSort('plannedDate')}
+                        >
+                          <span>계획 완료일</span>
+                          {renderSortIcon('plannedDate')}
+                        </Button>
+                      </TableHead>
+                      <TableHead className="w-28">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="-ml-3 h-8 data-[state=open]:bg-accent"
+                          onClick={() => handleSort('completionDate')}
+                        >
+                          <span>완료일</span>
+                          {renderSortIcon('completionDate')}
+                        </Button>
+                      </TableHead>
+                      <TableHead className="w-20 text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="-mr-3 h-8 data-[state=open]:bg-accent ml-auto flex"
+                          onClick={() => handleSort('manHour')}
+                        >
+                          <span>M/H</span>
+                          {renderSortIcon('manHour')}
+                        </Button>
+                      </TableHead>
+                      <TableHead className="w-20 text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="-mr-3 h-8 data-[state=open]:bg-accent ml-auto flex"
+                          onClick={() => handleSort('manDay')}
+                        >
+                          <span>M/D</span>
+                          {renderSortIcon('manDay')}
+                        </Button>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
