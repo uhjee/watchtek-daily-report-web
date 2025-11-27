@@ -72,15 +72,19 @@ export class ReportTextFormatterService {
     })
 
     // Group 번호 매기기
+    // indent: 그룹(0) -> 서브그룹(4칸) -> 아이템(8칸)
+    const INDENT_SUBGROUP = '    ' // 4칸
+    const INDENT_ITEM = '        ' // 8칸
+
     let groupIndex = 1
     groupedByGroup.forEach((subGroups, group) => {
       result += `${groupIndex}. ${group}\n`
 
       subGroups.forEach((subGroup) => {
-        result += `[${subGroup.subGroup}]\n`
+        result += `${INDENT_SUBGROUP}[${subGroup.subGroup}]\n`
 
         subGroup.items.forEach((item) => {
-          let itemText = `- ${item.title}(${item.person}`
+          let itemText = `${INDENT_ITEM}- ${item.title}(${item.person}`
           if (type === '진행업무' && item.progress !== undefined) {
             itemText += `, ${item.progress}%`
           }

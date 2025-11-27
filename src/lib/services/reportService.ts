@@ -99,8 +99,16 @@ export class ReportService {
       processedReports.filter((r) => r.isToday)
     )
     // 예정업무: isTomorrow가 true이거나, 진행 중이면서 완료되지 않은 작업 (progress < 100)
+    // 예외: 연차/반차는 progress와 무관하게 실제 날짜로만 판단 (예정업무로 자동 분류 안 함)
     const plannedTasks = this.groupByProjectAndSubGroup(
-      processedReports.filter((r) => r.isTomorrow || (r.isToday && r.progressRate < 100))
+      processedReports.filter((r) => {
+        // 연차/반차인 경우 isTomorrow일 때만 예정업무로 분류
+        if (this.isLeaveReport(r)) {
+          return r.isTomorrow
+        }
+        // 일반 작업: 기존 로직 유지
+        return r.isTomorrow || (r.isToday && r.progressRate < 100)
+      })
     )
 
     // 6. 주간 데이터 조회 및 공수 집계 (일간 보고서 상단용)
@@ -1245,31 +1253,50 @@ export class ReportService {
 
   /**
    * 주간 데이터 기준으로 인원별 공수를 집계하고 작성 완료 여부를 체크한다
+   * 반차/연차 정보를 고려하여 기대 공수를 조정한다
    */
   private calculateWeeklyManHourSummary(reports: DailyReport[]) {
     // 1. 이번 주 월요일부터 오늘까지의 날짜 범위
     const today = getToday()
     const { startDate, endDate } = getThisWeekMondayToToday(today)
 
-    // 2. 기대 공수 계산 (근무일수 * 8)
+    // 2. 기본 기대 공수 계산 (근무일수 * 8)
     const workingDays = getWorkingDaysCount(startDate, endDate)
-    const expectedManHour = workingDays * 8
+    const baseExpectedManHour = workingDays * 8
 
-    // 3. 인원별 공수 합계 계산
+    // 3. 연차/반차 정보 추출 (Group='기타', title에 '연차' 또는 '반차' 포함)
+    const leaveInfoByPerson = this.extractLeaveInfoFromReports(reports)
+
+    // 4. 인원별 공수 합계 계산 (연차/반차 제외)
     const manHourMap = new Map<string, number>()
     reports.forEach((report) => {
+      // 연차/반차 항목은 공수 집계에서 제외
+      if (this.isLeaveReport(report)) {
+        return
+      }
       const current = manHourMap.get(report.person) || 0
       manHourMap.set(report.person, current + report.manHour)
     })
 
-    // 4. 배열로 변환 및 우선순위 정렬, 작성 완료 여부 체크
+    // 5. 배열로 변환 및 우선순위 정렬, 작성 완료 여부 체크
     const result = Array.from(manHourMap.entries())
-      .map(([name, hours]) => ({
-        name,
-        hours,
-        isCompleted: hours === expectedManHour,
-        priority: this.getMemberPriority(name),
-      }))
+      .map(([name, hours]) => {
+        // 개인별 연차/반차 공제 계산
+        const personLeaveInfo = leaveInfoByPerson.get(name) || []
+        const leaveDeduction = this.calculateLeaveDeduction(personLeaveInfo)
+        const expectedManHour = baseExpectedManHour - leaveDeduction
+
+        // 연차/반차 정보 텍스트 생성
+        const leaveInfoText = this.formatLeaveInfoText(personLeaveInfo)
+
+        return {
+          name,
+          hours,
+          isCompleted: hours >= expectedManHour,
+          leaveInfo: leaveInfoText,
+          priority: this.getMemberPriority(name),
+        }
+      })
       .sort((a, b) => {
         // 우선순위 오름차순
         if (a.priority !== b.priority) {
@@ -1279,11 +1306,103 @@ export class ReportService {
         return a.name.localeCompare(b.name, 'ko')
       })
 
-    return result.map(({ name, hours, isCompleted }) => ({
+    return result.map(({ name, hours, isCompleted, leaveInfo }) => ({
       name,
       hours,
       isCompleted,
+      leaveInfo,
     }))
+  }
+
+  /**
+   * 보고서가 연차/반차 항목인지 확인한다
+   * - 연차: Group='기타'이고, (title에 '연차' 포함 또는 subGroup='연차')
+   * - 반차: Group='기타'이고, (title에 '반차' 포함 또는 subGroup='반차')
+   */
+  private isLeaveReport(report: DailyReport): boolean {
+    if (report.group !== '기타') return false
+    const title = report.title?.toLowerCase() || ''
+    const subGroup = report.subGroup || ''
+
+    const isAnnualLeave = title.includes('연차') || subGroup === '연차'
+    const isHalfDayLeave = title.includes('반차') || subGroup === '반차'
+
+    return isAnnualLeave || isHalfDayLeave
+  }
+
+  /**
+   * 보고서 데이터에서 연차/반차 정보를 추출한다
+   * - 연차: Group='기타'이고, (title에 '연차' 포함 또는 subGroup='연차')
+   * - 반차: Group='기타'이고, (title에 '반차' 포함 또는 subGroup='반차')
+   */
+  private extractLeaveInfoFromReports(reports: DailyReport[]): Map<string, LeaveInfo[]> {
+    const leaveInfoMap = new Map<string, LeaveInfo[]>()
+
+    reports.forEach((report) => {
+      if (report.group !== '기타') return
+
+      const title = report.title?.toLowerCase() || ''
+      const subGroup = report.subGroup || ''
+      let leaveType: LeaveType | null = null
+
+      // 반차 판단: title에 '반차' 포함 또는 subGroup이 '반차'
+      if (title.includes('반차') || subGroup === '반차') {
+        leaveType = '반차'
+      // 연차 판단: title에 '연차' 포함 또는 subGroup이 '연차'
+      } else if (title.includes('연차') || subGroup === '연차') {
+        leaveType = '연차'
+      }
+
+      if (leaveType) {
+        const person = report.person
+        const leaveInfo: LeaveInfo = {
+          date: report.date.start,
+          type: leaveType,
+          dayOfWeek: getDayOfWeekKorean(report.date.start),
+        }
+
+        if (!leaveInfoMap.has(person)) {
+          leaveInfoMap.set(person, [])
+        }
+        leaveInfoMap.get(person)?.push(leaveInfo)
+      }
+    })
+
+    // 각 멤버의 연차/반차 정보를 날짜순으로 정렬
+    leaveInfoMap.forEach((leaveList) => {
+      leaveList.sort((a, b) => a.date.localeCompare(b.date))
+    })
+
+    return leaveInfoMap
+  }
+
+  /**
+   * 연차/반차 정보를 기반으로 공제할 공수를 계산한다
+   * 반차: 4m/h, 연차: 8m/h
+   */
+  private calculateLeaveDeduction(leaveInfo: LeaveInfo[]): number {
+    return leaveInfo.reduce((total, leave) => {
+      if (leave.type === '연차') {
+        return total + 8
+      } else if (leave.type === '반차') {
+        return total + 4
+      }
+      return total
+    }, 0)
+  }
+
+  /**
+   * 연차/반차 정보를 텍스트로 포맷한다
+   */
+  private formatLeaveInfoText(leaveInfo: LeaveInfo[]): string | undefined {
+    if (!leaveInfo || leaveInfo.length === 0) return undefined
+
+    return leaveInfo
+      .map((leave) => {
+        const formattedDate = formatDateToShortFormat(leave.date)
+        return `${formattedDate}(${leave.dayOfWeek}) ${leave.type}`
+      })
+      .join(', ')
   }
 
   /**

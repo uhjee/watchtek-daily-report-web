@@ -588,7 +588,14 @@ export default function ReportsPage() {
                             </span>
                           </div>
                           <div>
-                            <p className="text-sm font-medium">{person.name}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium">{person.name}</p>
+                              {person.leaveInfo && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-500">
+                                  {person.leaveInfo}
+                                </span>
+                              )}
+                            </div>
                             <p className="text-xs text-muted-foreground">
                               {person.hours}m/h
                             </p>
