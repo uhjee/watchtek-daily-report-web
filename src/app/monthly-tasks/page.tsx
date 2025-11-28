@@ -254,7 +254,7 @@ export default function MonthlyTasksPage() {
   }, [baseFilteredTasks])
 
   // 엑셀 다운로드 핸들러
-  const handleExcelDownload = () => {
+  const handleExcelDownload = async () => {
     if (!data?.tasks) return
 
     // 모든 멤버별로 필터링된 업무 목록 생성
@@ -293,7 +293,7 @@ export default function MonthlyTasksPage() {
       return { name: member.name, tasks }
     })
 
-    downloadMonthlyTasksExcel(selectedYear, selectedMonth, memberTasksMap)
+    await downloadMonthlyTasksExcel(selectedYear, selectedMonth, memberTasksMap)
   }
 
   // 정렬 아이콘 렌더링

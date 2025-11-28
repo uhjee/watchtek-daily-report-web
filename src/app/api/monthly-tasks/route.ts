@@ -15,6 +15,7 @@ interface NotionPage {
 
 /**
  * Notion 페이지를 DailyReport로 변환
+ * (월간 보고서 로직과 동일한 transformNotionData 참조)
  */
 function transformNotionPageToTask(page: NotionPage): DailyReport | null {
   try {
@@ -32,11 +33,12 @@ function transformNotionPageToTask(page: NotionPage): DailyReport | null {
     const personName = personEmail ? memberMap[personEmail]?.name || '미지정' : '미지정'
 
     // Group, SubGroup
-    const group = props.Group?.select?.name || '미분류'
-    const subGroup = props.SubGroup?.select?.name || '미분류'
+    const group = props.Group?.select?.name || '기타'
+    const subGroup = props.SubGroup?.select?.name || '일반'
 
-    // Progress, ManHour
-    const progressRate = props.Progress?.number || 0
+    // Progress (0~1 -> 0~100 변환), ManHour
+    const progressRaw = props.Progress?.number ?? 0
+    const progressRate = progressRaw * 100
     const manHour = props.ManHour?.number || 0
 
     // PMS 정보
@@ -55,7 +57,6 @@ function transformNotionPageToTask(page: NotionPage): DailyReport | null {
         start: dateInfo.start,
         end: dateInfo.end,
       },
-      // isToday, isTomorrow는 필요시 클라이언트에서 계산
       isToday: false,
       isTomorrow: false,
       manHour,
@@ -69,8 +70,89 @@ function transformNotionPageToTask(page: NotionPage): DailyReport | null {
 }
 
 /**
+ * 다중 담당자 처리 - 담당자가 여러 명인 경우 각 담당자별로 보고서 복제
+ * (월간 보고서 로직의 processMultiplePeopleRaw와 동일)
+ */
+function processMultiplePeople(pages: NotionPage[]): NotionPage[] {
+  const processedPages: NotionPage[] = []
+
+  pages.forEach((page) => {
+    const people = page.properties?.Person?.people || []
+
+    if (people.length <= 1) {
+      processedPages.push(page)
+    } else {
+      // 담당자가 2명 이상인 경우 각 담당자별로 복제
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      people.forEach((person: any) => {
+        const clonedPage = JSON.parse(JSON.stringify(page))
+        clonedPage.properties.Person.people = [person]
+        processedPages.push(clonedPage)
+      })
+    }
+  })
+
+  return processedPages
+}
+
+/**
+ * 중복 체크를 위한 키 생성
+ * (월간 보고서 로직의 generateDistinctKey와 동일)
+ */
+function generateDistinctKey(report: DailyReport): string {
+  if (report.pmsNumber && report.pmsNumber !== null) {
+    return `${report.person}-${report.pmsNumber}`
+  } else {
+    const normalizedTitle = report.title.replace(/\s+/g, '')
+    return `${report.person}-${normalizedTitle}`
+  }
+}
+
+/**
+ * 중복된 보고서를 제거하고 manHour를 합산
+ * (월간 보고서 로직의 distinctReports와 동일)
+ */
+function distinctReports(reports: DailyReport[]): DailyReport[] {
+  const uniqueMap = new Map<string, DailyReport>()
+  const manHourSumMap = new Map<string, number>()
+
+  reports.forEach((report) => {
+    const key = generateDistinctKey(report)
+
+    // manHour 합산
+    const currentManHour = manHourSumMap.get(key) || 0
+    manHourSumMap.set(key, currentManHour + (report.manHour || 0))
+
+    // 날짜가 더 큰 보고서로 업데이트 (end 우선, 없으면 start)
+    if (!uniqueMap.has(key)) {
+      uniqueMap.set(key, report)
+    } else {
+      const existingReport = uniqueMap.get(key)!
+      const existingDate = existingReport.date.end
+        ? new Date(existingReport.date.end)
+        : new Date(existingReport.date.start)
+      const currentDate = report.date.end
+        ? new Date(report.date.end)
+        : new Date(report.date.start)
+
+      // 날짜가 더 큰 보고서의 progressRate를 사용
+      if (currentDate > existingDate) {
+        uniqueMap.set(key, report)
+      }
+    }
+  })
+
+  // 최종 결과 생성 (manHour 합산 값 적용)
+  return Array.from(uniqueMap.entries()).map(([key, report]) => ({
+    ...report,
+    manHour: manHourSumMap.get(key) || report.manHour || 0,
+  }))
+}
+
+/**
  * GET /api/monthly-tasks?year=2025&month=11
  * 월별 업무 목록 조회
+ * - Notion 월간 보고서 생성 로직과 동일한 데이터 처리 적용
  */
 export async function GET(request: NextRequest) {
   try {
@@ -106,8 +188,15 @@ export async function GET(request: NextRequest) {
     const notionService = new NotionApiService()
 
     // Date 필터: 해당 월에 포함되는 모든 데이터
+    // Person 필터 추가: 담당자가 있는 데이터만 (월간 보고서와 동일)
     const filter = {
       and: [
+        {
+          property: 'Person',
+          people: {
+            is_not_empty: true,
+          },
+        },
         {
           property: 'Date',
           date: {
@@ -125,10 +214,16 @@ export async function GET(request: NextRequest) {
 
     const results = await notionService.queryDatabaseAll(filter)
 
-    // Notion 페이지를 DailyReport로 변환
-    const tasks: DailyReport[] = results
-      .map((page) => transformNotionPageToTask(page as NotionPage))
+    // 1. 다중 담당자 처리 (월간 보고서와 동일)
+    const processedPages = processMultiplePeople(results as NotionPage[])
+
+    // 2. Notion 페이지를 DailyReport로 변환
+    const rawTasks: DailyReport[] = processedPages
+      .map((page) => transformNotionPageToTask(page))
       .filter((task): task is DailyReport => task !== null)
+
+    // 3. 중복 제거 및 manHour 합산 (월간 보고서와 동일)
+    const tasks = distinctReports(rawTasks)
 
     return NextResponse.json({
       year: yearNum,
