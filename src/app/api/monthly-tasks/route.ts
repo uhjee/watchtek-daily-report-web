@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { NotionApiService } from '@/lib/services/notionApiService'
 import memberMap from '@/lib/config/members'
 import { DailyReport } from '@/lib/types/report'
+import { getCurrentMonthRangeByWednesday } from '@/lib/utils/dateUtils'
 
 interface NotionPageProperties {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -177,12 +178,12 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // 해당 월의 시작일과 종료일 계산
-    const startDate = new Date(yearNum, monthNum - 1, 1)
-    const endDate = new Date(yearNum, monthNum, 0) // 다음 달 0일 = 이번 달 마지막 날
+    // 해당 월의 마지막 날을 기준으로 수요일 기준 월 범위 계산 (Monthly Report와 동일)
+    const lastDayOfMonth = new Date(yearNum, monthNum, 0) // 다음 달 0일 = 이번 달 마지막 날
+    const lastDayStr = lastDayOfMonth.toISOString().split('T')[0]
 
-    const startDateStr = startDate.toISOString().split('T')[0]
-    const endDateStr = endDate.toISOString().split('T')[0]
+    // 수요일 기준 월 범위 계산
+    const { firstDay: startDateStr, lastDay: endDateStr } = getCurrentMonthRangeByWednesday(lastDayStr)
 
     // Notion API 조회
     const notionService = new NotionApiService()

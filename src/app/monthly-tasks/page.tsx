@@ -48,8 +48,8 @@ const members = Object.entries(memberMap)
   }))
   .sort((a, b) => a.priority - b.priority)
 
-// 기본 선택 멤버 (priority 가장 낮은 = 우선순위 가장 높은)
-const defaultMember = members[0]
+// '전체' 옵션 상수
+const ALL_MEMBERS = '전체'
 
 // 현재 연도, 월
 const now = new Date()
@@ -76,7 +76,7 @@ async function fetchMonthlyTasks(year: number, month: number): Promise<MonthlyTa
 export default function MonthlyTasksPage() {
   const [selectedYear, setSelectedYear] = useState(currentYear)
   const [selectedMonth, setSelectedMonth] = useState(currentMonth)
-  const [selectedMember, setSelectedMember] = useState(defaultMember.name)
+  const [selectedMember, setSelectedMember] = useState(ALL_MEMBERS)
   const [sortField, setSortField] = useState<SortField | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>(null)
   // 2차 필터: 선택된 group (파이차트 클릭)
@@ -142,8 +142,8 @@ export default function MonthlyTasksPage() {
     if (!data?.tasks) return []
 
     return data.tasks.filter((task) => {
-      // 멤버 필터
-      if (task.person !== selectedMember) return false
+      // 멤버 필터 ('전체'가 아닌 경우에만 필터링)
+      if (selectedMember !== ALL_MEMBERS && task.person !== selectedMember) return false
 
       // 완료일 기준 필터링 (Date.end가 있으면 end, 없으면 start 사용)
       const completionDate = task.date.end || task.date.start
@@ -378,6 +378,16 @@ export default function MonthlyTasksPage() {
               <Label className="text-sm font-medium whitespace-nowrap">담당자</Label>
               <RadioGroup value={selectedMember} onValueChange={handleMemberChange}>
                 <div className="flex items-center gap-3">
+                  {/* 전체 옵션 */}
+                  <div className="flex items-center space-x-1.5">
+                    <RadioGroupItem value={ALL_MEMBERS} id="all-members" />
+                    <Label
+                      htmlFor="all-members"
+                      className="text-sm font-normal cursor-pointer whitespace-nowrap"
+                    >
+                      {ALL_MEMBERS}
+                    </Label>
+                  </div>
                   {members.map((member) => (
                     <div key={member.email} className="flex items-center space-x-1.5">
                       <RadioGroupItem value={member.name} id={member.email} />
@@ -539,7 +549,7 @@ export default function MonthlyTasksPage() {
                     {sortedTasks.map((task, index) => {
                       const manDays = (task.manHour / 8).toFixed(1)
                       return (
-                        <TableRow key={task.id}>
+                        <TableRow key={`${task.id}-${task.person}`}>
                           <TableCell className="font-medium">{index + 1}</TableCell>
                           <TableCell className="truncate max-w-[8rem]" title={task.group}>
                             {task.group}
