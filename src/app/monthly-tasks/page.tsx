@@ -23,11 +23,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ListTodo, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, FileSpreadsheet, TrendingUp } from 'lucide-react'
+import { ListTodo, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, FileSpreadsheet, TrendingUp, CalendarDays } from 'lucide-react'
 import { GroupPieChart } from '@/components/GroupPieChart'
 import memberMap from '@/lib/config/members'
 import { DailyReport } from '@/lib/types/report'
 import { downloadMonthlyTasksExcel } from '@/lib/utils/excelUtils'
+import { extractLeaveItems, LeaveItem } from '@/lib/utils/leaveUtils'
+import { getWeeksOfMonth, formatDateToShortFormat } from '@/lib/utils/dateUtils'
 
 type SortField = 'group' | 'pmsNumber' | 'title' | 'plannedDate' | 'completionDate' | 'manHour' | 'manDay'
 type SortDirection = 'asc' | 'desc' | null
@@ -50,6 +52,7 @@ const members = Object.entries(memberMap)
 
 // '전체' 옵션 상수
 const ALL_MEMBERS = '전체'
+const ALL_WEEKS = '전체'
 
 // 현재 연도, 월
 const now = new Date()
@@ -67,7 +70,7 @@ async function fetchMonthlyTasks(year: number, month: number): Promise<MonthlyTa
 
   if (!res.ok) {
     const error = await res.json()
-    throw new Error(error.error || '월별 업무 목록 조회 실패')
+    throw new Error(error.error || '업무 이력 조회 실패')
   }
 
   return res.json()
@@ -76,11 +79,37 @@ async function fetchMonthlyTasks(year: number, month: number): Promise<MonthlyTa
 export default function MonthlyTasksPage() {
   const [selectedYear, setSelectedYear] = useState(currentYear)
   const [selectedMonth, setSelectedMonth] = useState(currentMonth)
+  const [selectedWeek, setSelectedWeek] = useState(ALL_WEEKS)
   const [selectedMember, setSelectedMember] = useState(ALL_MEMBERS)
   const [sortField, setSortField] = useState<SortField | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>(null)
   // 2차 필터: 선택된 group (파이차트 클릭)
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null)
+
+  // 해당 월의 주차 목록 계산 (수요일 기준)
+  const weekOptions = useMemo(() => {
+    return getWeeksOfMonth(selectedYear, selectedMonth)
+  }, [selectedYear, selectedMonth])
+
+  // 현재 선택된 기간의 날짜 범위 계산 (월~금 기준, 주말 제외)
+  const dateRangeText = useMemo(() => {
+    if (selectedWeek !== ALL_WEEKS) {
+      // 특정 주차 선택 시: 월요일 ~ 금요일
+      const weekInfo = weekOptions.find(w => w.week.toString() === selectedWeek)
+      if (weekInfo) {
+        // startDate는 이미 월요일, endDate(일요일)에서 금요일 계산
+        const endDate = new Date(weekInfo.endDate)
+        endDate.setDate(endDate.getDate() - 2) // 일요일 - 2 = 금요일
+        const fridayStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`
+        return `${formatDateToShortFormat(weekInfo.startDate)} ~ ${formatDateToShortFormat(fridayStr)}`
+      }
+    }
+    // 전체 주차 선택 시 (월 전체 범위: 1일 ~ 말일)
+    const firstDay = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`
+    const lastDayDate = new Date(selectedYear, selectedMonth, 0)
+    const lastDay = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(lastDayDate.getDate()).padStart(2, '0')}`
+    return `${formatDateToShortFormat(firstDay)} ~ ${formatDateToShortFormat(lastDay)}`
+  }, [selectedYear, selectedMonth, selectedWeek, weekOptions])
 
   // 데이터 조회
   const { data, isLoading } = useQuery({
@@ -92,6 +121,7 @@ export default function MonthlyTasksPage() {
   // 1차 필터 변경 시 group 초기화 및 정렬 초기화
   const handleYearChange = (value: string) => {
     setSelectedYear(parseInt(value))
+    setSelectedWeek(ALL_WEEKS)
     setSelectedGroup(null)
     setSortField(null)
     setSortDirection(null)
@@ -99,6 +129,14 @@ export default function MonthlyTasksPage() {
 
   const handleMonthChange = (value: string) => {
     setSelectedMonth(parseInt(value))
+    setSelectedWeek(ALL_WEEKS)
+    setSelectedGroup(null)
+    setSortField(null)
+    setSortDirection(null)
+  }
+
+  const handleWeekChange = (value: string) => {
+    setSelectedWeek(value)
     setSelectedGroup(null)
     setSortField(null)
     setSortDirection(null)
@@ -137,9 +175,14 @@ export default function MonthlyTasksPage() {
     }
   }
 
-  // 선택된 멤버로 필터링 + 완료일 기준 필터링 (정렬 제외)
+  // 선택된 멤버로 필터링 + 완료일 기준 필터링 + 주차 필터링 (정렬 제외)
   const baseFilteredTasks = useMemo(() => {
     if (!data?.tasks) return []
+
+    // 선택된 주차의 날짜 범위 가져오기
+    const selectedWeekInfo = selectedWeek !== ALL_WEEKS
+      ? weekOptions.find(w => w.week.toString() === selectedWeek)
+      : null
 
     return data.tasks.filter((task) => {
       // 멤버 필터 ('전체'가 아닌 경우에만 필터링)
@@ -149,13 +192,24 @@ export default function MonthlyTasksPage() {
       const completionDate = task.date.end || task.date.start
       if (!completionDate) return false
 
-      const taskDate = new Date(completionDate)
-      const taskYear = taskDate.getFullYear()
-      const taskMonth = taskDate.getMonth() + 1
+      // 주차 필터 ('전체'가 아닌 경우에만 필터링)
+      if (selectedWeekInfo) {
+        // 완료일이 선택된 주차 범위 내에 있는지 확인
+        if (completionDate < selectedWeekInfo.startDate || completionDate > selectedWeekInfo.endDate) {
+          return false
+        }
+      } else {
+        // 주차 '전체'인 경우: 기존 연/월 필터 적용
+        const taskDate = new Date(completionDate)
+        const taskYear = taskDate.getFullYear()
+        const taskMonth = taskDate.getMonth() + 1
 
-      return taskYear === selectedYear && taskMonth === selectedMonth
+        if (taskYear !== selectedYear || taskMonth !== selectedMonth) return false
+      }
+
+      return true
     })
-  }, [data, selectedMember, selectedYear, selectedMonth])
+  }, [data, selectedMember, selectedYear, selectedMonth, selectedWeek, weekOptions])
 
   // 테이블용 정렬된 태스크 (2차 필터: group 적용)
   const sortedTasks = useMemo(() => {
@@ -253,6 +307,31 @@ export default function MonthlyTasksPage() {
     }))
   }, [baseFilteredTasks])
 
+  // 근태 데이터 추출 (연차/반차) - 유틸 함수 사용
+  const leaveItems = useMemo((): LeaveItem[] => {
+    if (!data?.tasks) return []
+
+    // 멤버 필터 적용 ('전체'인 경우 null 전달)
+    const memberFilter = selectedMember === ALL_MEMBERS ? null : selectedMember
+
+    // 전체 근태 아이템 추출
+    const allLeaveItems = extractLeaveItems(data.tasks, memberFilter)
+
+    // 선택된 주차의 날짜 범위 가져오기
+    const selectedWeekInfo = selectedWeek !== ALL_WEEKS
+      ? weekOptions.find(w => w.week.toString() === selectedWeek)
+      : null
+
+    // 주차 필터 적용
+    if (selectedWeekInfo) {
+      return allLeaveItems.filter(item =>
+        item.date >= selectedWeekInfo.startDate && item.date <= selectedWeekInfo.endDate
+      )
+    }
+
+    return allLeaveItems
+  }, [data, selectedMember, selectedWeek, weekOptions])
+
   // 엑셀 다운로드 핸들러
   const handleExcelDownload = async () => {
     if (!data?.tasks) return
@@ -318,10 +397,15 @@ export default function MonthlyTasksPage() {
       <div className="space-y-6">
         {/* Page Header with Filters */}
         <div className="flex items-center justify-between gap-4">
-          <h1 className="text-2xl font-bold flex items-center gap-2 flex-shrink-0">
-            <ListTodo className="w-6 h-6 text-primary" />
-            월별 업무 목록
-          </h1>
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <ListTodo className="w-6 h-6 text-primary" />
+              업무 이력
+            </h1>
+            <span className="text-sm text-muted-foreground font-normal">
+              ({dateRangeText})
+            </span>
+          </div>
 
           {/* Filters */}
           <div className="flex items-center gap-4 flex-wrap">
@@ -368,6 +452,28 @@ export default function MonthlyTasksPage() {
                   </SelectContent>
                 </Select>
               </div>
+
+              <div className="flex items-center gap-2">
+                <Label htmlFor="week-select" className="text-sm font-medium whitespace-nowrap">
+                  주차
+                </Label>
+                <Select
+                  value={selectedWeek}
+                  onValueChange={handleWeekChange}
+                >
+                  <SelectTrigger id="week-select" className="w-[100px] h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_WEEKS}>전체</SelectItem>
+                    {weekOptions.map((weekInfo) => (
+                      <SelectItem key={weekInfo.week} value={weekInfo.week.toString()}>
+                        {weekInfo.week}주차
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* 구분선 */}
@@ -405,32 +511,94 @@ export default function MonthlyTasksPage() {
           </div>
         </div>
 
-        {/* Pie Chart */}
-        <Card className="shadow-soft">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-primary" />
-              Group별 업무
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="h-[320px]">
-            {isLoading ? (
-              <div className="flex items-center justify-center h-full">
-                <Skeleton className="h-48 w-48 rounded-full" />
-              </div>
-            ) : baseFilteredTasks.length > 0 ? (
-              <GroupPieChart
-                tasks={pieChartData}
-                selectedGroup={selectedGroup}
-                onGroupClick={handleGroupClick}
-              />
-            ) : (
-              <div className="flex items-center justify-center h-full text-muted-foreground">
-                데이터가 없습니다
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {/* Pie Chart & Leave Card Row */}
+        <div className="grid grid-cols-4 gap-6">
+          {/* Pie Chart (3/4) */}
+          <Card className="shadow-soft col-span-3">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-primary" />
+                Group별 업무
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="h-[320px]">
+              {isLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <Skeleton className="h-48 w-48 rounded-full" />
+                </div>
+              ) : baseFilteredTasks.length > 0 ? (
+                <GroupPieChart
+                  tasks={pieChartData}
+                  selectedGroup={selectedGroup}
+                  onGroupClick={handleGroupClick}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  데이터가 없습니다
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 근태 카드 (1/4) */}
+          <Card className="shadow-soft col-span-1">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <CalendarDays className="w-4 h-4 text-primary" />
+                근태
+                <span className="text-xs font-normal text-muted-foreground">
+                  {leaveItems.length}건
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="h-[320px] overflow-y-auto">
+              {isLoading ? (
+                <div className="space-y-2">
+                  {[...Array(3)].map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full" />
+                  ))}
+                </div>
+              ) : leaveItems.length > 0 ? (
+                <div className="space-y-2">
+                  {leaveItems.map((item, index) => (
+                    <div
+                      key={`${item.person}-${item.date}-${index}`}
+                      className="flex items-center justify-between py-2 px-3 bg-muted/30 rounded-lg"
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
+                          <span className="text-xs font-semibold text-primary">
+                            {item.person.charAt(0)}
+                          </span>
+                        </div>
+                        <span className="text-sm font-medium">{item.person}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded ${
+                            item.type === '연차'
+                              ? 'bg-blue-500/15 text-blue-500'
+                              : 'bg-amber-500/15 text-amber-500'
+                          }`}
+                        >
+                          {item.type}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {item.date.slice(5).replace('-', '/')}({item.dayOfWeek})
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                  <CalendarDays className="w-10 h-10 mb-2 opacity-30" />
+                  <span className="text-sm">근태 기록이 없습니다</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Table */}
         <Card className="shadow-soft">

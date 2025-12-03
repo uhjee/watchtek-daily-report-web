@@ -1,7 +1,7 @@
 import { NotionApiService } from './notionApiService'
 import { ReportTextFormatterService } from './reportTextFormatterService'
 import memberMap from '../config/members'
-import { DailyReport, ManHourByPersonWithReports, LeaveInfo, LeaveType } from '../types/report'
+import { DailyReport, ManHourByPersonWithReports, LeaveInfo } from '../types/report'
 import {
   getToday,
   getThisWeekMondayToToday,
@@ -11,9 +11,14 @@ import {
   isLastWeekdayOfWeek,
   isLastWeekdayOfMonth,
   getWeekOfMonth,
-  getDayOfWeekKorean,
   getCurrentMonthRangeByWednesday,
 } from '../utils/dateUtils'
+import {
+  isLeaveReport,
+  extractLeaveInfoByPerson,
+  calculateTotalLeaveDeduction,
+  formatLeaveInfoText,
+} from '../utils/leaveUtils'
 import { ReportTypeDetermination } from '../types/reportTypes'
 import {
   createHeading1Block,
@@ -102,8 +107,8 @@ export class ReportService {
     // 예외: 연차/반차는 progress와 무관하게 실제 날짜로만 판단 (예정업무로 자동 분류 안 함)
     const plannedTasks = this.groupByProjectAndSubGroup(
       processedReports.filter((r) => {
-        // 연차/반차인 경우 isTomorrow일 때만 예정업무로 분류
-        if (this.isLeaveReport(r)) {
+        // 연차/반차인 경우 isTomorrow일 때만 예정업무로 분류 (유틸 함수 사용)
+        if (isLeaveReport(r)) {
           return r.isTomorrow
         }
         // 일반 작업: 기존 로직 유지
@@ -479,31 +484,8 @@ export class ReportService {
    * @returns 멤버별 연차/반차 정보 Map
    */
   private getLeaveInfoByPerson(reports: DailyReport[]): Map<string, LeaveInfo[]> {
-    const leaveInfoMap = new Map<string, LeaveInfo[]>()
-
-    reports.forEach((report) => {
-      // Group='기타', SubGroup='연차' 또는 '반차'인 경우
-      if (report.group === '기타' && (report.subGroup === '연차' || report.subGroup === '반차')) {
-        const person = report.person
-        const leaveInfo: LeaveInfo = {
-          date: report.date.start,
-          type: report.subGroup as LeaveType,
-          dayOfWeek: getDayOfWeekKorean(report.date.start),
-        }
-
-        if (!leaveInfoMap.has(person)) {
-          leaveInfoMap.set(person, [])
-        }
-        leaveInfoMap.get(person)?.push(leaveInfo)
-      }
-    })
-
-    // 각 멤버의 연차/반차 정보를 날짜순으로 정렬
-    leaveInfoMap.forEach((leaveList) => {
-      leaveList.sort((a, b) => a.date.localeCompare(b.date))
-    })
-
-    return leaveInfoMap
+    // 유틸 함수 사용 (기간으로 설정된 연차/반차도 개별 날짜로 분리됨)
+    return extractLeaveInfoByPerson(reports)
   }
 
   /**
@@ -1264,14 +1246,14 @@ export class ReportService {
     const workingDays = getWorkingDaysCount(startDate, endDate)
     const baseExpectedManHour = workingDays * 8
 
-    // 3. 연차/반차 정보 추출 (Group='기타', title에 '연차' 또는 '반차' 포함)
-    const leaveInfoByPerson = this.extractLeaveInfoFromReports(reports)
+    // 3. 연차/반차 정보 추출 (유틸 함수 사용)
+    const leaveInfoByPerson = extractLeaveInfoByPerson(reports)
 
     // 4. 인원별 공수 합계 계산 (연차/반차 제외)
     const manHourMap = new Map<string, number>()
     reports.forEach((report) => {
       // 연차/반차 항목은 공수 집계에서 제외
-      if (this.isLeaveReport(report)) {
+      if (isLeaveReport(report)) {
         return
       }
       const current = manHourMap.get(report.person) || 0
@@ -1281,13 +1263,13 @@ export class ReportService {
     // 5. 배열로 변환 및 우선순위 정렬, 작성 완료 여부 체크
     const result = Array.from(manHourMap.entries())
       .map(([name, hours]) => {
-        // 개인별 연차/반차 공제 계산
+        // 개인별 연차/반차 공제 계산 (유틸 함수 사용)
         const personLeaveInfo = leaveInfoByPerson.get(name) || []
-        const leaveDeduction = this.calculateLeaveDeduction(personLeaveInfo)
+        const leaveDeduction = calculateTotalLeaveDeduction(personLeaveInfo)
         const expectedManHour = baseExpectedManHour - leaveDeduction
 
-        // 연차/반차 정보 텍스트 생성
-        const leaveInfoText = this.formatLeaveInfoText(personLeaveInfo)
+        // 연차/반차 정보 텍스트 생성 (유틸 함수 사용)
+        const leaveInfoText = formatLeaveInfoText(personLeaveInfo)
 
         return {
           name,
@@ -1312,97 +1294,6 @@ export class ReportService {
       isCompleted,
       leaveInfo,
     }))
-  }
-
-  /**
-   * 보고서가 연차/반차 항목인지 확인한다
-   * - 연차: Group='기타'이고, (title에 '연차' 포함 또는 subGroup='연차')
-   * - 반차: Group='기타'이고, (title에 '반차' 포함 또는 subGroup='반차')
-   */
-  private isLeaveReport(report: DailyReport): boolean {
-    if (report.group !== '기타') return false
-    const title = report.title?.toLowerCase() || ''
-    const subGroup = report.subGroup || ''
-
-    const isAnnualLeave = title.includes('연차') || subGroup === '연차'
-    const isHalfDayLeave = title.includes('반차') || subGroup === '반차'
-
-    return isAnnualLeave || isHalfDayLeave
-  }
-
-  /**
-   * 보고서 데이터에서 연차/반차 정보를 추출한다
-   * - 연차: Group='기타'이고, (title에 '연차' 포함 또는 subGroup='연차')
-   * - 반차: Group='기타'이고, (title에 '반차' 포함 또는 subGroup='반차')
-   */
-  private extractLeaveInfoFromReports(reports: DailyReport[]): Map<string, LeaveInfo[]> {
-    const leaveInfoMap = new Map<string, LeaveInfo[]>()
-
-    reports.forEach((report) => {
-      if (report.group !== '기타') return
-
-      const title = report.title?.toLowerCase() || ''
-      const subGroup = report.subGroup || ''
-      let leaveType: LeaveType | null = null
-
-      // 반차 판단: title에 '반차' 포함 또는 subGroup이 '반차'
-      if (title.includes('반차') || subGroup === '반차') {
-        leaveType = '반차'
-      // 연차 판단: title에 '연차' 포함 또는 subGroup이 '연차'
-      } else if (title.includes('연차') || subGroup === '연차') {
-        leaveType = '연차'
-      }
-
-      if (leaveType) {
-        const person = report.person
-        const leaveInfo: LeaveInfo = {
-          date: report.date.start,
-          type: leaveType,
-          dayOfWeek: getDayOfWeekKorean(report.date.start),
-        }
-
-        if (!leaveInfoMap.has(person)) {
-          leaveInfoMap.set(person, [])
-        }
-        leaveInfoMap.get(person)?.push(leaveInfo)
-      }
-    })
-
-    // 각 멤버의 연차/반차 정보를 날짜순으로 정렬
-    leaveInfoMap.forEach((leaveList) => {
-      leaveList.sort((a, b) => a.date.localeCompare(b.date))
-    })
-
-    return leaveInfoMap
-  }
-
-  /**
-   * 연차/반차 정보를 기반으로 공제할 공수를 계산한다
-   * 반차: 4m/h, 연차: 8m/h
-   */
-  private calculateLeaveDeduction(leaveInfo: LeaveInfo[]): number {
-    return leaveInfo.reduce((total, leave) => {
-      if (leave.type === '연차') {
-        return total + 8
-      } else if (leave.type === '반차') {
-        return total + 4
-      }
-      return total
-    }, 0)
-  }
-
-  /**
-   * 연차/반차 정보를 텍스트로 포맷한다
-   */
-  private formatLeaveInfoText(leaveInfo: LeaveInfo[]): string | undefined {
-    if (!leaveInfo || leaveInfo.length === 0) return undefined
-
-    return leaveInfo
-      .map((leave) => {
-        const formattedDate = formatDateToShortFormat(leave.date)
-        return `${formattedDate}(${leave.dayOfWeek}) ${leave.type}`
-      })
-      .join(', ')
   }
 
   /**

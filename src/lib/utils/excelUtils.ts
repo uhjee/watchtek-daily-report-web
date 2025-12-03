@@ -8,7 +8,7 @@ interface MemberTasks {
 }
 
 /**
- * 월별 업무 목록을 엑셀 파일로 다운로드
+ * 업무 이력을 엑셀 파일로 다운로드
  * @param year 연도
  * @param month 월
  * @param memberTasksMap 인원별 업무 목록 맵

@@ -341,3 +341,109 @@ export function getDayOfWeekKorean(dateString: string): string {
   const days = ['일', '월', '화', '수', '목', '금', '토'];
   return days[dayOfWeek];
 }
+
+/**
+ * 특정 월의 주차 목록을 반환 (수요일 기준)
+ * 수요일이 속한 월을 기준으로 주차를 계산
+ * @param year - 연도
+ * @param month - 월 (1-12)
+ * @returns 주차 정보 배열 [{ week: 1, startDate: 'YYYY-MM-DD', endDate: 'YYYY-MM-DD' }, ...]
+ */
+export function getWeeksOfMonth(
+  year: number,
+  month: number
+): Array<{ week: number; startDate: string; endDate: string }> {
+  const weeks: Array<{ week: number; startDate: string; endDate: string }> = [];
+
+  // 해당 월의 첫날과 마지막 날
+  const firstDayOfMonth = new Date(year, month - 1, 1);
+  const lastDayOfMonth = new Date(year, month, 0);
+
+  // 첫 번째 수요일 찾기
+  const firstWednesday = new Date(firstDayOfMonth);
+  while (firstWednesday.getDay() !== 3) {
+    // 3 = 수요일
+    firstWednesday.setDate(firstWednesday.getDate() + 1);
+  }
+
+  // 첫 번째 수요일이 해당 월에 속하는지 확인
+  // 만약 첫 번째 수요일이 이전 달의 마지막 주에 속한다면, 이전 주의 수요일부터 시작
+  let currentWednesday = new Date(firstWednesday);
+
+  // 이전 주의 수요일도 확인 (해당 월의 날짜가 포함될 수 있음)
+  const prevWednesday = new Date(firstWednesday);
+  prevWednesday.setDate(prevWednesday.getDate() - 7);
+
+  // 이전 주 수요일이 해당 월에 속하면 그 주부터 시작
+  if (prevWednesday.getMonth() + 1 === month) {
+    currentWednesday = prevWednesday;
+  }
+
+  let weekNumber = 1;
+
+  // 해당 월에 속하는 모든 주차 계산
+  while (true) {
+    // 주의 시작일 (수요일 기준 해당 주의 월요일)
+    const monday = new Date(currentWednesday);
+    monday.setDate(currentWednesday.getDate() - 2); // 수요일 - 2 = 월요일
+
+    // 주의 종료일 (수요일 기준 해당 주의 일요일)
+    const sunday = new Date(currentWednesday);
+    sunday.setDate(currentWednesday.getDate() + 4); // 수요일 + 4 = 일요일
+
+    // 수요일이 해당 월에 속하는 경우만 포함
+    if (currentWednesday.getMonth() + 1 === month) {
+      weeks.push({
+        week: weekNumber,
+        startDate: formatDateToYYYYMMDD(monday),
+        endDate: formatDateToYYYYMMDD(sunday),
+      });
+      weekNumber++;
+    }
+
+    // 다음 주 수요일로 이동
+    currentWednesday.setDate(currentWednesday.getDate() + 7);
+
+    // 수요일이 다음 달로 넘어가면 종료
+    if (currentWednesday.getMonth() + 1 !== month) {
+      break;
+    }
+  }
+
+  return weeks;
+}
+
+/**
+ * 특정 날짜가 속한 주차를 반환 (수요일 기준)
+ * @param dateString - YYYY-MM-DD 형식의 날짜 문자열
+ * @returns 주차 번호 (1, 2, 3, ...)
+ */
+export function getWeekNumberByWednesday(dateString: string): number {
+  const date = new Date(dateString);
+  const dayOfWeek = date.getDay();
+
+  // 해당 날짜가 속한 주의 수요일 찾기
+  const wednesday = new Date(date);
+  if (dayOfWeek < 3) {
+    // 일(0), 월(1), 화(2) -> 이전 주 수요일
+    wednesday.setDate(date.getDate() - (dayOfWeek + 4));
+  } else {
+    // 수(3), 목(4), 금(5), 토(6) -> 이번 주 수요일
+    wednesday.setDate(date.getDate() - (dayOfWeek - 3));
+  }
+
+  // 수요일이 속한 월의 주차 목록 가져오기
+  const year = wednesday.getFullYear();
+  const month = wednesday.getMonth() + 1;
+  const weeks = getWeeksOfMonth(year, month);
+
+  // 해당 수요일이 몇 번째 주인지 찾기
+  const wednesdayStr = formatDateToYYYYMMDD(wednesday);
+  for (const weekInfo of weeks) {
+    if (wednesdayStr >= weekInfo.startDate && wednesdayStr <= weekInfo.endDate) {
+      return weekInfo.week;
+    }
+  }
+
+  return 1; // 기본값
+}

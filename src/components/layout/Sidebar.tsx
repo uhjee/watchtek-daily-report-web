@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils'
 const navigation = [
   { name: '대시보드', href: '/', icon: LayoutDashboard },
   { name: '금일 업무 현황', href: '/reports', icon: FileText },
-  { name: '월별 업무 목록', href: '/monthly-tasks', icon: ListTodo },
+  { name: '업무 이력', href: '/monthly-tasks', icon: ListTodo },
   { name: '보고서 기록', href: '/history', icon: Calendar },
   { name: '설정', href: '/settings', icon: Settings },
 ]

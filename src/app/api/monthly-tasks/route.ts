@@ -152,7 +152,7 @@ function distinctReports(reports: DailyReport[]): DailyReport[] {
 
 /**
  * GET /api/monthly-tasks?year=2025&month=11
- * 월별 업무 목록 조회
+ * 업무 이력
  * - Notion 월간 보고서 생성 로직과 동일한 데이터 처리 적용
  */
 export async function GET(request: NextRequest) {
@@ -233,9 +233,9 @@ export async function GET(request: NextRequest) {
       total: tasks.length,
     })
   } catch (error) {
-    console.error('월별 업무 목록 조회 중 오류:', error)
+    console.error('업무 이력 조회 중 오류:', error)
     return NextResponse.json(
-      { error: '월별 업무 목록 조회 실패' },
+      { error: '업무 이력 조회 실패' },
       { status: 500 }
     )
   }
