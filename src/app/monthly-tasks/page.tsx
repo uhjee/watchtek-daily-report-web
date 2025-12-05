@@ -24,6 +24,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { ListTodo, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, FileSpreadsheet, TrendingUp, CalendarDays } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
 import { GroupPieChart } from '@/components/GroupPieChart'
 import memberMap from '@/lib/config/members'
 import { DailyReport } from '@/lib/types/report'
@@ -31,7 +32,7 @@ import { downloadMonthlyTasksExcel } from '@/lib/utils/excelUtils'
 import { extractLeaveItems, LeaveItem } from '@/lib/utils/leaveUtils'
 import { getWeeksOfMonth, formatDateToShortFormat } from '@/lib/utils/dateUtils'
 
-type SortField = 'group' | 'pmsNumber' | 'title' | 'plannedDate' | 'completionDate' | 'manHour' | 'manDay'
+type SortField = 'group' | 'pmsNumber' | 'title' | 'plannedDate' | 'completionDate' | 'manHour' | 'manDay' | 'person' | 'progress'
 type SortDirection = 'asc' | 'desc' | null
 
 interface MonthlyTasksResponse {
@@ -76,6 +77,33 @@ async function fetchMonthlyTasks(year: number, month: number): Promise<MonthlyTa
   return res.json()
 }
 
+// 중복 데이터 병합 함수
+// 중복 기준: 업무구분(group), 담당자(person), PMS 관리번호(pmsNumber), 업무 내용(title)
+// 병합 기준: 완료일(date.end || date.start)이 가장 최신인 데이터의 모든 속성 사용
+function mergeDuplicateTasks(tasks: DailyReport[]): DailyReport[] {
+  const taskMap = new Map<string, DailyReport>()
+
+  tasks.forEach((task) => {
+    // 중복 판단 키 생성
+    const key = `${task.group}|${task.person}|${task.pmsNumber || ''}|${task.title}`
+
+    const existing = taskMap.get(key)
+    if (!existing) {
+      taskMap.set(key, task)
+    } else {
+      // 완료일 비교하여 최신 데이터로 교체
+      const existingDate = existing.date.end || existing.date.start
+      const currentDate = task.date.end || task.date.start
+
+      if (new Date(currentDate).getTime() > new Date(existingDate).getTime()) {
+        taskMap.set(key, task)
+      }
+    }
+  })
+
+  return Array.from(taskMap.values())
+}
+
 export default function MonthlyTasksPage() {
   const [selectedYear, setSelectedYear] = useState(currentYear)
   const [selectedMonth, setSelectedMonth] = useState(currentMonth)
@@ -85,6 +113,13 @@ export default function MonthlyTasksPage() {
   const [sortDirection, setSortDirection] = useState<SortDirection>(null)
   // 2차 필터: 선택된 group (파이차트 클릭)
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null)
+  // 진행 상태 필터 (전체/완료/진행)
+  type ProgressFilter = 'all' | 'completed' | 'in_progress'
+  const [progressFilter, setProgressFilter] = useState<ProgressFilter>('all')
+  // 회의 제외 필터
+  const [excludeMeeting, setExcludeMeeting] = useState(false)
+  // 업무구분 필터
+  const [selectedTaskGroup, setSelectedTaskGroup] = useState('all')
 
   // 해당 월의 주차 목록 계산 (수요일 기준)
   const weekOptions = useMemo(() => {
@@ -175,7 +210,7 @@ export default function MonthlyTasksPage() {
     }
   }
 
-  // 선택된 멤버로 필터링 + 완료일 기준 필터링 + 주차 필터링 (정렬 제외)
+  // 선택된 멤버로 필터링 + 완료일 기준 필터링 + 주차 필터링 + 중복 병합 (정렬 제외)
   const baseFilteredTasks = useMemo(() => {
     if (!data?.tasks) return []
 
@@ -184,7 +219,7 @@ export default function MonthlyTasksPage() {
       ? weekOptions.find(w => w.week.toString() === selectedWeek)
       : null
 
-    return data.tasks.filter((task) => {
+    const filteredTasks = data.tasks.filter((task) => {
       // 멤버 필터 ('전체'가 아닌 경우에만 필터링)
       if (selectedMember !== ALL_MEMBERS && task.person !== selectedMember) return false
 
@@ -209,14 +244,34 @@ export default function MonthlyTasksPage() {
 
       return true
     })
+
+    // 중복 데이터 병합 적용
+    return mergeDuplicateTasks(filteredTasks)
   }, [data, selectedMember, selectedYear, selectedMonth, selectedWeek, weekOptions])
 
-  // 테이블용 정렬된 태스크 (2차 필터: group 적용)
+  // 테이블용 정렬된 태스크 (2차 필터: group 적용, 완료건 필터 적용)
   const sortedTasks = useMemo(() => {
     // 2차 필터: selectedGroup이 있으면 해당 group만 필터링
-    const tasks = selectedGroup
+    let tasks = selectedGroup
       ? baseFilteredTasks.filter((task) => task.group === selectedGroup)
       : [...baseFilteredTasks]
+
+    // 회의 제외 필터 적용
+    if (excludeMeeting) {
+      tasks = tasks.filter((task) => task.group !== '회의' && !task.title.includes('회의'))
+    }
+
+    // 업무구분 필터 적용
+    if (selectedTaskGroup !== 'all') {
+      tasks = tasks.filter((task) => task.group === selectedTaskGroup)
+    }
+
+    // 진행 상태 필터 적용
+    if (progressFilter === 'completed') {
+      tasks = tasks.filter((task) => task.progressRate === 100)
+    } else if (progressFilter === 'in_progress') {
+      tasks = tasks.filter((task) => task.progressRate !== 100)
+    }
 
     // 정렬 적용
     if (sortField && sortDirection) {
@@ -252,6 +307,12 @@ export default function MonthlyTasksPage() {
             const bManDay = b.manHour / 8
             compareResult = aManDay - bManDay
             break
+          case 'person':
+            compareResult = a.person.localeCompare(b.person, 'ko')
+            break
+          case 'progress':
+            compareResult = a.progressRate - b.progressRate
+            break
         }
 
         return sortDirection === 'asc' ? compareResult : -compareResult
@@ -276,12 +337,19 @@ export default function MonthlyTasksPage() {
 
       return new Date(aDate).getTime() - new Date(bDate).getTime()
     })
-  }, [baseFilteredTasks, selectedGroup, sortField, sortDirection])
+  }, [baseFilteredTasks, selectedGroup, sortField, sortDirection, progressFilter, excludeMeeting, selectedTaskGroup])
 
-  // 총 공수 계산 (m/d)
+  // 총 공수 계산 (m/d) - 진척도 필터 적용된 sortedTasks 기준
   const totalManDays = useMemo(() => {
-    const totalManHours = baseFilteredTasks.reduce((sum, task) => sum + task.manHour, 0)
+    const totalManHours = sortedTasks.reduce((sum, task) => sum + task.manHour, 0)
     return (totalManHours / 8).toFixed(1)
+  }, [sortedTasks])
+
+  // 업무구분 옵션 목록 (baseFilteredTasks에서 추출)
+  const taskGroupOptions = useMemo(() => {
+    const groups = new Set<string>()
+    baseFilteredTasks.forEach((task) => groups.add(task.group))
+    return Array.from(groups).sort((a, b) => a.localeCompare(b, 'ko'))
   }, [baseFilteredTasks])
 
   // GroupPieChart용 데이터 변환 (정렬과 무관)
@@ -340,7 +408,7 @@ export default function MonthlyTasksPage() {
     const lowPriorityGroups = ['회의', '기타']
 
     const memberTasksMap = members.map((member) => {
-      const tasks = data.tasks
+      const filteredTasks = data.tasks
         .filter((task) => {
           // 멤버 필터
           if (task.person !== member.name) return false
@@ -355,21 +423,26 @@ export default function MonthlyTasksPage() {
 
           return taskYear === selectedYear && taskMonth === selectedMonth
         })
-        .sort((a, b) => {
-          // 기본 정렬: 회의/기타 우선순위 낮춤, 완료일 오름차순
-          const aIsLowPriority = lowPriorityGroups.includes(a.group)
-          const bIsLowPriority = lowPriorityGroups.includes(b.group)
 
-          if (aIsLowPriority !== bIsLowPriority) {
-            return aIsLowPriority ? 1 : -1
-          }
+      // 중복 데이터 병합 적용
+      const mergedTasks = mergeDuplicateTasks(filteredTasks)
 
-          const aDate = a.date.end || a.date.start
-          const bDate = b.date.end || b.date.start
-          return new Date(aDate).getTime() - new Date(bDate).getTime()
-        })
+      // 정렬 적용
+      const sortedTasks = mergedTasks.sort((a, b) => {
+        // 기본 정렬: 회의/기타 우선순위 낮춤, 완료일 오름차순
+        const aIsLowPriority = lowPriorityGroups.includes(a.group)
+        const bIsLowPriority = lowPriorityGroups.includes(b.group)
 
-      return { name: member.name, tasks }
+        if (aIsLowPriority !== bIsLowPriority) {
+          return aIsLowPriority ? 1 : -1
+        }
+
+        const aDate = a.date.end || a.date.start
+        const bDate = b.date.end || b.date.start
+        return new Date(aDate).getTime() - new Date(bDate).getTime()
+      })
+
+      return { name: member.name, tasks: sortedTasks }
     })
 
     await downloadMonthlyTasksExcel(selectedYear, selectedMonth, memberTasksMap)
@@ -390,6 +463,28 @@ export default function MonthlyTasksPage() {
       return <ArrowDown className={iconClass} />
     }
     return <ArrowUpDown className={iconClass} />
+  }
+
+  // Progress Bar 컴포넌트
+  const ProgressBar = ({ value }: { value: number }) => {
+    const getColor = (val: number) => {
+      if (val >= 80) return 'bg-[#1ee0ac]'
+      if (val >= 50) return 'bg-primary'
+      if (val >= 30) return 'bg-[#f4bd0e]'
+      return 'bg-[#e85347]'
+    }
+
+    return (
+      <div className="flex items-center gap-2">
+        <div className="h-1.5 w-16 bg-muted rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-300 ${getColor(value)}`}
+            style={{ width: `${Math.min(value, 100)}%` }}
+          />
+        </div>
+        <span className="text-xs font-medium w-8 text-right">{value}%</span>
+      </div>
+    )
   }
 
   return (
@@ -610,16 +705,66 @@ export default function MonthlyTasksPage() {
                   총{sortedTasks.length}건 / 총{totalManDays}m/d
                 </span>
               </CardTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleExcelDownload}
-                disabled={isLoading || !data?.tasks}
-                className="flex items-center gap-1.5"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                엑셀
-              </Button>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="exclude-meeting"
+                    checked={excludeMeeting}
+                    onCheckedChange={(checked) => setExcludeMeeting(checked === true)}
+                  />
+                  <Label
+                    htmlFor="exclude-meeting"
+                    className="text-sm font-normal cursor-pointer whitespace-nowrap"
+                  >
+                    회의 제외
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm font-medium whitespace-nowrap">업무구분</Label>
+                  <Select
+                    value={selectedTaskGroup}
+                    onValueChange={setSelectedTaskGroup}
+                  >
+                    <SelectTrigger className="w-[120px] h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">전체</SelectItem>
+                      {taskGroupOptions.map((group) => (
+                        <SelectItem key={group} value={group}>
+                          {group}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm font-medium whitespace-nowrap">진척도</Label>
+                  <Select
+                    value={progressFilter}
+                    onValueChange={(value) => setProgressFilter(value as 'all' | 'completed' | 'in_progress')}
+                  >
+                    <SelectTrigger className="w-[90px] h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">전체</SelectItem>
+                      <SelectItem value="completed">완료</SelectItem>
+                      <SelectItem value="in_progress">진행</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExcelDownload}
+                  disabled={isLoading || !data?.tasks}
+                  className="flex items-center gap-1.5"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  엑셀
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="pt-0 px-6 pb-4">
@@ -711,6 +856,28 @@ export default function MonthlyTasksPage() {
                           {renderSortIcon('manDay')}
                         </Button>
                       </TableHead>
+                      <TableHead className="w-20">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="-ml-3 h-8 data-[state=open]:bg-accent"
+                          onClick={() => handleSort('person')}
+                        >
+                          <span>담당자</span>
+                          {renderSortIcon('person')}
+                        </Button>
+                      </TableHead>
+                      <TableHead className="w-28">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="-ml-3 h-8 data-[state=open]:bg-accent"
+                          onClick={() => handleSort('progress')}
+                        >
+                          <span>진척도</span>
+                          {renderSortIcon('progress')}
+                        </Button>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -751,6 +918,19 @@ export default function MonthlyTasksPage() {
                           </TableCell>
                           <TableCell className="text-right whitespace-nowrap">
                             {manDays}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                                <span className="text-[10px] font-semibold text-primary">
+                                  {task.person.charAt(0)}
+                                </span>
+                              </div>
+                              <span className="text-sm">{task.person}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <ProgressBar value={task.progressRate} />
                           </TableCell>
                         </TableRow>
                       )
