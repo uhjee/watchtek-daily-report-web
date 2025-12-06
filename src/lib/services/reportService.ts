@@ -80,17 +80,21 @@ export class ReportService {
   }
 
   /**
-   * 오늘의 일일 보고서 데이터를 생성한다
+   * 일일 보고서 데이터를 생성한다
+   * @param date - YYYY-MM-DD 형식의 날짜 (기본값: 오늘)
    */
   async generateDailyReport(date?: string) {
-    // 1. Notion 데이터베이스에서 오늘/내일 작업 조회
-    const rawData = await this.fetchTodayTomorrowTasks()
+    // 기준 날짜 설정 (date 파라미터가 없으면 오늘)
+    const targetDate = date || getToday()
+
+    // 1. Notion 데이터베이스에서 해당 날짜/다음날 작업 조회
+    const rawData = await this.fetchTodayTomorrowTasks(targetDate)
 
     // 2. 다중 담당자 처리 (원본 데이터에서)
     const processedRawData = this.processMultiplePeopleRaw(rawData)
 
-    // 3. 데이터 변환 및 구조화
-    const reports = this.transformNotionData(processedRawData)
+    // 3. 데이터 변환 및 구조화 (기준 날짜 전달)
+    const reports = this.transformNotionData(processedRawData, targetDate)
 
     // 4. 중복 제거 및 manHour 합산
     const distinctReports = this.distinctReports(reports)
@@ -116,22 +120,21 @@ export class ReportService {
       })
     )
 
-    // 6. 주간 데이터 조회 및 공수 집계 (일간 보고서 상단용)
-    const weeklyRawData = await this.fetchWeeklyTasks()
+    // 6. 주간 데이터 조회 및 공수 집계 (일간 보고서 상단용, 기준 날짜 전달)
+    const weeklyRawData = await this.fetchWeeklyTasks(targetDate)
     const processedWeeklyRawData = this.processMultiplePeopleRaw(weeklyRawData)
-    const weeklyReports = this.transformNotionData(processedWeeklyRawData)
+    const weeklyReports = this.transformNotionData(processedWeeklyRawData, targetDate)
     const distinctWeeklyReports = this.distinctReports(weeklyReports)
     const manHourSummary = this.calculateWeeklyManHourSummary(distinctWeeklyReports)
 
     // 7. 주간 데이터 그룹화 (파이 차트용 - 이번 주 전체 작업)
     const weeklyGroupedTasks = this.groupByProjectAndSubGroup(distinctWeeklyReports)
 
-    // 8. 일간 데이터 기반 개인별 공수 및 진행 상황 생성 (오늘/내일 작업만)
+    // 8. 일간 데이터 기반 개인별 공수 및 진행 상황 생성 (해당 날짜/다음날 작업만)
     const manHourByPerson = this.createManHourByPerson(processedReports)
 
     // 9. 결과 반환
-    const today = getToday()
-    const dateStr = date || today
+    const dateStr = targetDate
 
     return {
       date: dateStr,
@@ -734,17 +737,17 @@ export class ReportService {
   }
 
   /**
-   * Notion 데이터베이스에서 오늘/내일 작업을 조회한다
-   * getToday() 기준으로 date 필터 사용 (Notion formula 대신)
+   * Notion 데이터베이스에서 기준 날짜/다음날 작업을 조회한다
+   * @param baseDate - YYYY-MM-DD 형식의 기준 날짜 (기본값: 오늘)
    */
-  private async fetchTodayTomorrowTasks() {
-    const today = getToday()
-    const tomorrow = this.getTomorrow(today)
+  private async fetchTodayTomorrowTasks(baseDate?: string) {
+    const targetDate = baseDate || getToday()
+    const nextDate = this.getTomorrow(targetDate)
 
-    // 넓은 범위로 조회 (이번 주 전체)
+    // 넓은 범위로 조회 (해당 주 전체)
     // transformNotionData에서 isToday/isTomorrow를 정확히 계산하므로
     // 여기서는 넓게 가져오고 나중에 필터링
-    const { startDate } = getThisWeekMondayToToday(today)
+    const { startDate } = getThisWeekMondayToToday(targetDate)
 
     const filter = {
       and: [
@@ -757,7 +760,7 @@ export class ReportService {
         {
           property: 'Date',
           date: {
-            on_or_before: tomorrow,
+            on_or_before: nextDate,
           },
         },
         {
@@ -780,23 +783,24 @@ export class ReportService {
   }
 
   /**
-   * 내일 날짜를 YYYY-MM-DD 형식으로 반환
-   * @param today - 오늘 날짜 (YYYY-MM-DD 형식)
-   * @returns 내일 날짜 (YYYY-MM-DD 형식)
+   * 다음 날짜를 YYYY-MM-DD 형식으로 반환
+   * @param baseDate - 기준 날짜 (YYYY-MM-DD 형식)
+   * @returns 다음 날짜 (YYYY-MM-DD 형식)
    */
-  private getTomorrow(today: string): string {
-    const date = new Date(today)
+  private getTomorrow(baseDate: string): string {
+    const date = new Date(baseDate)
     date.setDate(date.getDate() + 1)
     return date.toISOString().split('T')[0]
   }
 
   /**
-   * Notion 데이터베이스에서 이번 주 월요일부터 오늘까지의 작업을 조회한다
+   * Notion 데이터베이스에서 해당 주 월요일부터 기준 날짜까지의 작업을 조회한다
+   * @param baseDate - YYYY-MM-DD 형식의 기준 날짜 (기본값: 오늘)
    */
-  private async fetchWeeklyTasks() {
-    // 이번 주 월요일부터 오늘까지의 날짜 범위 계산
-    const today = getToday()
-    const { startDate } = getThisWeekMondayToToday(today)
+  private async fetchWeeklyTasks(baseDate?: string) {
+    // 해당 주 월요일부터 기준 날짜까지의 날짜 범위 계산
+    const targetDate = baseDate || getToday()
+    const { startDate } = getThisWeekMondayToToday(targetDate)
 
     const filter = {
       and: [
@@ -815,7 +819,7 @@ export class ReportService {
         {
           property: 'Date',
           date: {
-            on_or_before: today,
+            on_or_before: targetDate,
           },
         },
       ],
@@ -833,11 +837,13 @@ export class ReportService {
 
   /**
    * Notion 원본 데이터를 내부 데이터 구조로 변환한다
-   * isToday, isTomorrow는 getToday() 기준으로 직접 계산
+   * isToday, isTomorrow는 기준 날짜를 기준으로 직접 계산
+   * @param rawData - Notion API 원본 데이터
+   * @param baseDate - YYYY-MM-DD 형식의 기준 날짜 (기본값: 오늘)
    */
-  private transformNotionData(rawData: unknown[]): DailyReport[] {
-    const today = getToday()
-    const tomorrow = this.getTomorrow(today)
+  private transformNotionData(rawData: unknown[], baseDate?: string): DailyReport[] {
+    const targetDate = baseDate || getToday()
+    const nextDate = this.getTomorrow(targetDate)
 
     return rawData.map((page) => {
       const typedPage = page as { id: string; properties: Record<string, Record<string, unknown>> }
@@ -869,9 +875,9 @@ export class ReportService {
           start: dateStart,
           end: dateEnd,
         },
-        // Date 범위를 고려하여 isToday, isTomorrow 계산
-        isToday: checkDateInRange(today, dateStart, dateEnd),
-        isTomorrow: checkDateInRange(tomorrow, dateStart, dateEnd),
+        // Date 범위를 고려하여 isToday, isTomorrow 계산 (기준 날짜 기준)
+        isToday: checkDateInRange(targetDate, dateStart, dateEnd),
+        isTomorrow: checkDateInRange(nextDate, dateStart, dateEnd),
         manHour: (this.extractProperty(typedPage as unknown as Record<string, unknown>, 'ManHour', 'number') as number) ?? 0,
         pmsNumber: this.extractProperty(typedPage as unknown as Record<string, unknown>, 'PmsNumber', 'number') as number | undefined,
         pmsLink: ((this.extractProperty(typedPage as unknown as Record<string, unknown>, 'PmsLink', 'formula') as Record<string, string>)?.string as string) || undefined,

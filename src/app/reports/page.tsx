@@ -1,15 +1,20 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
+import { format } from 'date-fns'
+import { ko } from 'date-fns/locale'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Calendar } from '@/components/ui/calendar'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { toast } from 'sonner'
 import { GroupPieChart } from '@/components/GroupPieChart'
 import { DashboardLayout } from '@/components/layout'
 import { ReportTextFormatterService } from '@/lib/services/reportTextFormatterService'
-import { formatDateToShortFormat } from '@/lib/utils/dateUtils'
+import { formatDateToShortFormat, getToday } from '@/lib/utils/dateUtils'
+import { cn } from '@/lib/utils'
 import {
   Users,
   Clock,
@@ -22,6 +27,7 @@ import {
   ExternalLink,
   FileText,
   Copy,
+  CalendarIcon,
 } from 'lucide-react'
 
 // ReportTextFormatterService 인스턴스 생성
@@ -266,6 +272,15 @@ function TaskItem({
 }
 
 export default function ReportsPage() {
+  // 선택된 날짜 상태 (기본값: getToday() 함수 반환값)
+  const [selectedDate, setSelectedDate] = useState<Date>(() => {
+    const today = getToday() // YYYY-MM-DD 형식
+    return new Date(today)
+  })
+
+  // 날짜를 YYYY-MM-DD 형식으로 변환
+  const formattedDate = format(selectedDate, 'yyyy-MM-dd')
+
   // 페이지 로드 시 자동으로 데이터 조회 (Notion 페이지 생성 없음)
   const {
     data: reportResponse,
@@ -273,10 +288,17 @@ export default function ReportsPage() {
     refetch,
     isRefetching,
   } = useQuery({
-    queryKey: ['reports'],
-    queryFn: () => fetchReport(),
+    queryKey: ['reports', formattedDate],
+    queryFn: () => fetchReport(formattedDate),
     staleTime: 60 * 1000, // 1분
   })
+
+  // 날짜 변경 핸들러
+  const handleDateChange = (date: Date | undefined) => {
+    if (date) {
+      setSelectedDate(date)
+    }
+  }
 
   // Notion 페이지 생성 mutation
   const createMutation = useMutation({
@@ -312,7 +334,7 @@ export default function ReportsPage() {
 
   // Notion 페이지 생성 버튼 클릭
   const handleCreateNotionReport = () => {
-    createMutation.mutate(undefined)
+    createMutation.mutate(formattedDate)
   }
 
   // 데이터 새로고침
@@ -479,6 +501,34 @@ export default function ReportsPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            {/* Date Picker */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    'w-[180px] justify-start text-left font-normal shadow-soft',
+                    !selectedDate && 'text-muted-foreground'
+                  )}
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {selectedDate ? (
+                    format(selectedDate, 'yyyy년 MM월 dd일', { locale: ko })
+                  ) : (
+                    <span>날짜 선택</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <Calendar
+                  mode="single"
+                  selected={selectedDate}
+                  onSelect={handleDateChange}
+                  locale={ko}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
             {/* 새로고침 버튼 */}
             <Button
               variant="outline"
